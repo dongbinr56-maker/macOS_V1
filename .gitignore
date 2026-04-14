@@ -1,0 +1,13 @@
+.DS_Store
+.build/
+.swiftpm/
+.claude/
+
+DerivedData/
+*.xcuserstate
+*.xccheckout
+*.moved-aside
+*.xcscmblueprint
+
+xcuserdata/
+/AIWebUsageMonitor.xcodeproj/project.xcworkspace/xcuserdata/

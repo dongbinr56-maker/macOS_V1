@@ -1,0 +1,1485 @@
+import AppKit
+import SwiftUI
+
+struct PixelOfficeView: View {
+    let sessions: [WebAccountSession]
+    @ObservedObject var viewModel: UsageMonitorViewModel
+    let onOpenSettings: () -> Void
+
+    @State private var selectedAgentID: UUID?
+    @State private var hoveredAgentID: UUID?
+    @AppStorage("pixelOfficeVisibilityFilter") private var visibilityFilterRaw = PixelOfficeAgentVisibilityFilter.all.rawValue
+    @AppStorage("pixelOfficePlatformFilter") private var platformFilterRaw = PixelOfficePlatformFilter.all.rawValue
+
+    private var allOfficeAgents: [PixelOfficeAgent] {
+        let descriptors = sessions.map { session in
+            PixelOfficeSessionDescriptor(
+                session: session,
+                availability: viewModel.availability(for: session),
+                activity: viewModel.activityState(for: session),
+                context: viewModel.sessionTaskContext(for: session),
+                taskState: viewModel.sessionTaskState(for: session)
+            )
+        }
+        return PixelOfficeSceneBuilder.makeAgents(from: descriptors)
+    }
+
+    private var visibilityFilter: PixelOfficeAgentVisibilityFilter {
+        get { PixelOfficeAgentVisibilityFilter(rawValue: visibilityFilterRaw) ?? .all }
+        nonmutating set { visibilityFilterRaw = newValue.rawValue }
+    }
+
+    private var platformFilter: PixelOfficePlatformFilter {
+        get { PixelOfficePlatformFilter(rawValue: platformFilterRaw) ?? .all }
+        nonmutating set { platformFilterRaw = newValue.rawValue }
+    }
+
+    private var officeFilter: PixelOfficeAgentFilter {
+        PixelOfficeAgentFilter(
+            visibility: visibilityFilter,
+            platform: platformFilter
+        )
+    }
+
+    private var officeAgents: [PixelOfficeAgent] {
+        officeFilter.apply(to: allOfficeAgents)
+    }
+
+    private var alertAgents: [PixelOfficeAgent] {
+        PixelOfficeSceneBuilder.alertQueue(from: officeAgents)
+    }
+
+    private var activeAgents: [PixelOfficeAgent] {
+        PixelOfficeSceneBuilder.activeQueue(from: officeAgents)
+    }
+
+    private var hasFilteredResults: Bool {
+        !allOfficeAgents.isEmpty && officeAgents.isEmpty
+    }
+
+    private var selectedAgent: PixelOfficeAgent? {
+        if let selectedAgentID,
+           let agent = officeAgents.first(where: { $0.id == selectedAgentID }) {
+            return agent
+        }
+
+        return officeAgents.first
+    }
+
+    private var focusedAgent: PixelOfficeAgent? {
+        if let hoveredAgentID,
+           let agent = officeAgents.first(where: { $0.id == hoveredAgentID }) {
+            return agent
+        }
+
+        return selectedAgent
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            PixelOfficeCommandDeck(
+                totalAgentCount: allOfficeAgents.count,
+                visibleAgentCount: officeAgents.count,
+                visibilityFilter: visibilityFilter,
+                platformFilter: platformFilter,
+                selectedAgent: selectedAgent,
+                alertAgents: alertAgents,
+                activeAgents: activeAgents,
+                isRefreshing: viewModel.isRefreshingAll,
+                onSelectVisibility: { visibilityFilter = $0 },
+                onSelectPlatform: { platformFilter = $0 },
+                onSelectAgent: { selectedAgentID = $0 },
+                onRefreshAll: {
+                    Task {
+                        await viewModel.refreshAll()
+                    }
+                },
+                onResetFilters: resetFilters,
+                onOpenSettings: onOpenSettings
+            )
+
+            PixelOfficeSceneCard(
+                agents: officeAgents,
+                totalAgentCount: allOfficeAgents.count,
+                hasSessions: !allOfficeAgents.isEmpty,
+                selectedAgentID: selectedAgentID,
+                focusedAgent: focusedAgent,
+                onSelect: { selectedAgentID = $0 },
+                onHover: { hoveredAgentID = $0 },
+                onResetFilters: resetFilters,
+                onOpenSettings: onOpenSettings
+            )
+
+            if let selectedAgent {
+                PixelOfficeInspector(
+                    agent: selectedAgent,
+                    onRefresh: {
+                        Task {
+                            await viewModel.refresh(accountID: selectedAgent.id)
+                        }
+                    },
+                    onLogin: {
+                        viewModel.reopenLoginWindow(for: selectedAgent.id)
+                    },
+                    onOpenSource: selectedAgent.sourceURL.map { sourceURL in
+                        {
+                            NSWorkspace.shared.open(sourceURL)
+                        }
+                    },
+                    onOpenDashboard: {
+                        NSWorkspace.shared.open(selectedAgent.sourceURL ?? selectedAgent.dashboardURL)
+                    }
+                )
+            } else if hasFilteredResults {
+                PixelOfficeFilteredInspector(
+                    hiddenCount: allOfficeAgents.count,
+                    onResetFilters: resetFilters
+                )
+            } else {
+                PixelOfficeEmptyInspector(onOpenSettings: onOpenSettings)
+            }
+
+            if !officeAgents.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        ForEach(officeAgents) { agent in
+                            PixelOfficeRosterChip(
+                                agent: agent,
+                                isSelected: agent.id == selectedAgent?.id
+                            ) {
+                                selectedAgentID = agent.id
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 2)
+                }
+            }
+        }
+        .onAppear {
+            if selectedAgentID == nil {
+                selectedAgentID = officeAgents.first?.id
+            }
+        }
+        .onChange(of: officeAgents.map(\.id)) { _, ids in
+            if !ids.contains(where: { $0 == selectedAgentID }) {
+                selectedAgentID = ids.first
+            }
+
+            if !ids.contains(where: { $0 == hoveredAgentID }) {
+                hoveredAgentID = nil
+            }
+        }
+    }
+
+    private func resetFilters() {
+        visibilityFilter = .all
+        platformFilter = .all
+    }
+}
+
+private struct PixelOfficeSceneCard: View {
+    let agents: [PixelOfficeAgent]
+    let totalAgentCount: Int
+    let hasSessions: Bool
+    let selectedAgentID: UUID?
+    let focusedAgent: PixelOfficeAgent?
+    let onSelect: (UUID) -> Void
+    let onHover: (UUID?) -> Void
+    let onResetFilters: () -> Void
+    let onOpenSettings: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 10) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("PIXEL OFFICE")
+                        .font(.system(size: 12, weight: .black, design: .monospaced))
+                        .kerning(1.4)
+                    Text(sceneSubtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                if !hasSessions {
+                    Button("세션 추가") {
+                        onOpenSettings()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                } else if agents.isEmpty {
+                    Button("필터 초기화") {
+                        onResetFilters()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                } else {
+                    Text("\(agents.count)/\(totalAgentCount) AGENTS")
+                        .font(.system(size: 11, weight: .bold, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .background(
+                            Capsule(style: .continuous)
+                                .fill(Color.white.opacity(0.06))
+                        )
+                }
+            }
+
+            ZStack {
+                TimelineView(.animation(minimumInterval: 1.0 / 8.0, paused: agents.isEmpty)) { context in
+                    PixelOfficeScene(
+                        agents: agents,
+                        selectedAgentID: selectedAgentID,
+                        focusedAgent: focusedAgent,
+                        timestamp: context.date.timeIntervalSinceReferenceDate,
+                        onSelect: onSelect,
+                        onHover: onHover
+                    )
+                }
+
+                if !hasSessions {
+                    PixelOfficeSceneEmptyOverlay(
+                        title: "세션이 아직 없습니다.",
+                        message: "설정에서 Codex, Claude, Cursor 세션을 연결하면 오피스에 바로 배치됩니다.",
+                        buttonTitle: "세션 추가",
+                        action: onOpenSettings
+                    )
+                } else if agents.isEmpty {
+                    PixelOfficeSceneEmptyOverlay(
+                        title: "현재 필터와 일치하는 세션이 없습니다.",
+                        message: "필터를 초기화하거나 다른 플랫폼을 선택해서 다시 확인하세요.",
+                        buttonTitle: "필터 초기화",
+                        action: onResetFilters
+                    )
+                }
+            }
+            .frame(height: 348)
+            .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 26, style: .continuous)
+                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
+            )
+        }
+        .padding(14)
+        .background(cardBackground)
+    }
+
+    private var sceneSubtitle: String {
+        guard hasSessions else {
+            return "Codex나 Claude 세션을 추가하면 픽셀 오피스에 캐릭터가 배치됩니다."
+        }
+
+        guard !agents.isEmpty else {
+            return "현재 필터에 맞는 세션이 없어 빈 오피스를 표시합니다."
+        }
+
+        let blocked = agents.filter(\.isAlerting).count
+        if blocked > 0 {
+            return "\(blocked)개의 세션이 경고 상태라 보드 앞에 배치되었습니다."
+        }
+
+        let working = agents.filter { $0.zone == .desk }.count
+        return "\(working)개의 세션이 워크스테이션에서 작업 중입니다."
+    }
+
+    private var cardBackground: some View {
+        RoundedRectangle(cornerRadius: 26, style: .continuous)
+            .fill(
+                LinearGradient(
+                    colors: [
+                        Color(red: 0.08, green: 0.10, blue: 0.16),
+                        Color(red: 0.05, green: 0.08, blue: 0.13)
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+    }
+}
+
+private struct PixelOfficeCommandDeck: View {
+    let totalAgentCount: Int
+    let visibleAgentCount: Int
+    let visibilityFilter: PixelOfficeAgentVisibilityFilter
+    let platformFilter: PixelOfficePlatformFilter
+    let selectedAgent: PixelOfficeAgent?
+    let alertAgents: [PixelOfficeAgent]
+    let activeAgents: [PixelOfficeAgent]
+    let isRefreshing: Bool
+    let onSelectVisibility: (PixelOfficeAgentVisibilityFilter) -> Void
+    let onSelectPlatform: (PixelOfficePlatformFilter) -> Void
+    let onSelectAgent: (UUID) -> Void
+    let onRefreshAll: () -> Void
+    let onResetFilters: () -> Void
+    let onOpenSettings: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 10) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("OFFICE CONTROL")
+                        .font(.system(size: 11, weight: .black, design: .monospaced))
+                        .kerning(1.2)
+                    Text("\(visibleAgentCount) visible · \(totalAgentCount) total")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                Button {
+                    onRefreshAll()
+                } label: {
+                    Label(isRefreshing ? "갱신 중" : "전체 새로고침", systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(isRefreshing)
+
+                Button("설정") {
+                    onOpenSettings()
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+            }
+
+            PixelOfficeFilterRow(
+                title: "상태",
+                items: PixelOfficeAgentVisibilityFilter.allCases,
+                selectedID: visibilityFilter.id,
+                label: \.title,
+                onSelect: onSelectVisibility
+            )
+
+            PixelOfficeFilterRow(
+                title: "플랫폼",
+                items: PixelOfficePlatformFilter.allCases,
+                selectedID: platformFilter.id,
+                label: \.title,
+                onSelect: onSelectPlatform
+            )
+
+            if !alertAgents.isEmpty || !activeAgents.isEmpty {
+                PixelOfficeMissionBoard(
+                    selectedAgentID: selectedAgent?.id,
+                    alertAgents: alertAgents,
+                    activeAgents: activeAgents,
+                    onSelectAgent: onSelectAgent
+                )
+            }
+
+            if visibilityFilter != .all || platformFilter != .all {
+                Button("필터 초기화") {
+                    onResetFilters()
+                }
+                .buttonStyle(.plain)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            }
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(Color(nsColor: .controlBackgroundColor).opacity(0.72))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .stroke(Color.white.opacity(0.06), lineWidth: 1)
+                )
+        )
+    }
+}
+
+private struct PixelOfficeMissionBoard: View {
+    let selectedAgentID: UUID?
+    let alertAgents: [PixelOfficeAgent]
+    let activeAgents: [PixelOfficeAgent]
+    let onSelectAgent: (UUID) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if !alertAgents.isEmpty {
+                PixelOfficeMissionLane(
+                    title: "즉시 조치",
+                    agents: alertAgents,
+                    selectedAgentID: selectedAgentID,
+                    onSelectAgent: onSelectAgent
+                )
+            }
+
+            if !activeAgents.isEmpty {
+                PixelOfficeMissionLane(
+                    title: "활성 작업",
+                    agents: activeAgents,
+                    selectedAgentID: selectedAgentID,
+                    onSelectAgent: onSelectAgent
+                )
+            }
+        }
+    }
+}
+
+private struct PixelOfficeMissionLane: View {
+    let title: String
+    let agents: [PixelOfficeAgent]
+    let selectedAgentID: UUID?
+    let onSelectAgent: (UUID) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(agents) { agent in
+                        Button {
+                            onSelectAgent(agent.id)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 5) {
+                                HStack(spacing: 6) {
+                                    Circle()
+                                        .fill(agent.tint)
+                                        .frame(width: 8, height: 8)
+                                    Text(agent.badge)
+                                        .font(.system(size: 10, weight: .black, design: .monospaced))
+                                        .foregroundStyle(.secondary)
+                                }
+
+                                Text(agent.displayName)
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.primary)
+                                    .lineLimit(1)
+
+                                Text(agent.conversationTitle ?? agent.latestUserPromptPreview ?? agent.stateLabel)
+                                    .font(.caption2)
+                                    .foregroundStyle(agent.tint)
+                                    .lineLimit(2)
+                            }
+                            .padding(10)
+                            .frame(width: 154, alignment: .leading)
+                            .background(
+                                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                    .fill(agent.id == selectedAgentID ? agent.tint.opacity(0.16) : Color(nsColor: .windowBackgroundColor).opacity(0.86))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                            .stroke(agent.id == selectedAgentID ? agent.tint.opacity(0.50) : Color.white.opacity(0.05), lineWidth: 1)
+                                    )
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.vertical, 1)
+            }
+        }
+    }
+}
+
+private struct PixelOfficeFilterRow<Item: Identifiable>: View where Item.ID == String {
+    let title: String
+    let items: [Item]
+    let selectedID: String
+    let label: KeyPath<Item, String>
+    let onSelect: (Item) -> Void
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 10) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 42, alignment: .leading)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(items) { item in
+                        let isSelected = item.id == selectedID
+                        Button(item[keyPath: label]) {
+                            onSelect(item)
+                        }
+                        .buttonStyle(.plain)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(isSelected ? Color.white : Color.secondary)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(
+                            Capsule(style: .continuous)
+                                .fill(isSelected ? Color.accentColor.opacity(0.92) : Color.white.opacity(0.05))
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct PixelOfficeScene: View {
+    let agents: [PixelOfficeAgent]
+    let selectedAgentID: UUID?
+    let focusedAgent: PixelOfficeAgent?
+    let timestamp: TimeInterval
+    let onSelect: (UUID) -> Void
+    let onHover: (UUID?) -> Void
+
+    var body: some View {
+        GeometryReader { proxy in
+            let size = proxy.size
+            let furniture = PixelOfficeSceneBuilder.furniture(in: size)
+
+            ZStack {
+                PixelOfficeBackdrop(size: size)
+                ForEach(furniture.backLayer) { item in
+                    PixelOfficeFurnitureView(item: item, timestamp: timestamp)
+                }
+
+                ForEach(furniture.middleLayer) { item in
+                    PixelOfficeFurnitureView(item: item, timestamp: timestamp)
+                }
+
+                ForEach(agents) { agent in
+                    PixelOfficeAgentView(
+                        agent: agent,
+                        isSelected: agent.id == selectedAgentID,
+                        isHovered: agent.id == focusedAgent?.id && agent.id != selectedAgentID,
+                        timestamp: timestamp,
+                        onHover: onHover
+                    ) {
+                        onSelect(agent.id)
+                    }
+                    .position(
+                        x: size.width * agent.position.x,
+                        y: size.height * agent.position.y
+                    )
+                }
+
+                ForEach(furniture.frontLayer) { item in
+                    PixelOfficeFurnitureView(item: item, timestamp: timestamp)
+                }
+            }
+        }
+        .background(
+            LinearGradient(
+                colors: [
+                    Color(red: 0.07, green: 0.09, blue: 0.15),
+                    Color(red: 0.03, green: 0.05, blue: 0.09)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        )
+    }
+}
+
+private struct PixelOfficeBackdrop: View {
+    let size: CGSize
+
+    var body: some View {
+        let contentInset = size.width * 0.04
+        let corridorRect = CGRect(
+            x: contentInset,
+            y: size.height * 0.05,
+            width: size.width - contentInset * 2,
+            height: size.height * 0.18
+        )
+        let leftRoomRect = CGRect(
+            x: contentInset,
+            y: size.height * 0.27,
+            width: size.width * 0.40,
+            height: size.height * 0.60
+        )
+        let rightRoomRect = CGRect(
+            x: size.width * 0.54,
+            y: size.height * 0.27,
+            width: size.width * 0.40,
+            height: size.height * 0.60
+        )
+        let dividerRect = CGRect(
+            x: size.width * 0.48,
+            y: size.height * 0.23,
+            width: size.width * 0.06,
+            height: size.height * 0.64
+        )
+        let doorwayRect = CGRect(
+            x: dividerRect.minX + dividerRect.width * 0.15,
+            y: size.height * 0.73,
+            width: dividerRect.width * 0.70,
+            height: size.height * 0.14
+        )
+
+        ZStack {
+            Color(red: 0.08, green: 0.11, blue: 0.17)
+
+            PixelOfficeTiledArea(
+                subpath: "floors/floor_1.png",
+                rect: corridorRect,
+                tileSize: 16
+            )
+            .overlay(
+                Rectangle()
+                    .stroke(Color.black.opacity(0.10), lineWidth: 1)
+            )
+
+            PixelOfficeTiledArea(
+                subpath: "floors/floor_7.png",
+                rect: leftRoomRect,
+                tileSize: 16
+            )
+            .overlay(
+                Rectangle()
+                    .stroke(Color.black.opacity(0.08), lineWidth: 1)
+            )
+
+            PixelOfficeTiledArea(
+                subpath: "floors/floor_8.png",
+                rect: rightRoomRect,
+                tileSize: 16
+            )
+            .overlay(
+                Rectangle()
+                    .stroke(Color.black.opacity(0.08), lineWidth: 1)
+            )
+
+            Rectangle()
+                .fill(Color(red: 0.07, green: 0.10, blue: 0.16))
+                .frame(width: dividerRect.width, height: dividerRect.height)
+                .position(x: dividerRect.midX, y: dividerRect.midY)
+
+            Rectangle()
+                .fill(Color(red: 0.12, green: 0.16, blue: 0.23))
+                .frame(width: doorwayRect.width, height: doorwayRect.height)
+                .position(x: doorwayRect.midX, y: doorwayRect.midY)
+
+            HStack(spacing: 0) {
+                Rectangle()
+                    .fill(Color(red: 0.07, green: 0.10, blue: 0.16))
+                    .frame(width: size.width * 0.46)
+
+                Rectangle()
+                    .fill(Color.clear)
+                    .frame(width: size.width * 0.08)
+
+                Rectangle()
+                    .fill(Color(red: 0.07, green: 0.10, blue: 0.16))
+                    .frame(width: size.width * 0.46)
+            }
+            .frame(height: size.height * 0.05)
+            .frame(maxHeight: .infinity, alignment: .top)
+
+            HStack(spacing: 0) {
+                Rectangle()
+                    .fill(Color(red: 0.07, green: 0.10, blue: 0.16))
+                    .frame(width: size.width * 0.46)
+
+                Rectangle()
+                    .fill(Color.clear)
+                    .frame(width: size.width * 0.08)
+
+                Rectangle()
+                    .fill(Color(red: 0.07, green: 0.10, blue: 0.16))
+                    .frame(width: size.width * 0.46)
+            }
+            .frame(height: size.height * 0.05)
+            .frame(maxHeight: .infinity, alignment: .bottom)
+
+            HStack(spacing: 0) {
+                Rectangle()
+                    .fill(Color(red: 0.07, green: 0.10, blue: 0.16))
+                    .frame(width: size.width * 0.04)
+
+                Spacer()
+
+                Rectangle()
+                    .fill(Color(red: 0.07, green: 0.10, blue: 0.16))
+                    .frame(width: size.width * 0.04)
+            }
+
+            Rectangle()
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Color.clear,
+                            Color.black.opacity(0.12)
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+                .frame(height: 120)
+                .frame(maxHeight: .infinity, alignment: .bottom)
+        }
+    }
+}
+
+private struct PixelOfficeTiledArea: View {
+    let subpath: String
+    let rect: CGRect
+    let tileSize: CGFloat
+
+    var body: some View {
+        let columns = max(Int(ceil(rect.width / tileSize)), 1)
+        let rows = max(Int(ceil(rect.height / tileSize)), 1)
+
+        ZStack {
+            Color.black.opacity(0.08)
+
+            VStack(spacing: 0) {
+                ForEach(0..<rows, id: \.self) { _ in
+                    HStack(spacing: 0) {
+                        ForEach(0..<columns, id: \.self) { _ in
+                            PixelOfficeTiledImage(
+                                subpath: subpath,
+                                size: CGSize(width: tileSize, height: tileSize)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        .frame(width: rect.width, height: rect.height)
+        .clipShape(Rectangle())
+        .position(x: rect.midX, y: rect.midY)
+    }
+}
+
+private struct PixelOfficeFurnitureView: View {
+    let item: PixelFurniturePlacement
+    let timestamp: TimeInterval
+
+    var body: some View {
+        ZStack(alignment: .center) {
+            if item.glow {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(item.glowColor.opacity(0.18))
+                    .frame(width: item.size.width + 20, height: item.size.height + 20)
+                    .blur(radius: 8)
+            }
+
+            PixelOfficeImage(subpath: item.subpath, size: item.size)
+                .opacity(item.opacity)
+                .brightness(item.brightness)
+                .overlay(alignment: .center) {
+                    if item.monitorFrames.count > 1 {
+                        PixelOfficeImage(
+                            subpath: item.monitorFrames[currentMonitorFrameIndex],
+                            size: item.size
+                        )
+                    }
+                }
+        }
+        .position(item.position)
+    }
+
+    private var currentMonitorFrameIndex: Int {
+        Int((timestamp * 2.2).rounded(.down)).quotientAndRemainder(dividingBy: item.monitorFrames.count).remainder
+    }
+}
+
+private struct PixelOfficeAgentView: View {
+    let agent: PixelOfficeAgent
+    let isSelected: Bool
+    let isHovered: Bool
+    let timestamp: TimeInterval
+    let onHover: (UUID?) -> Void
+    let onTap: () -> Void
+
+    var body: some View {
+        Button(action: onTap) {
+            ZStack {
+                if isSelected {
+                    Ellipse()
+                        .fill(agent.tint.opacity(0.22))
+                        .frame(width: 34, height: 14)
+                        .offset(y: 18)
+                }
+
+                if isSelected || isHovered {
+                    PixelOfficeAgentTag(agent: agent, isSelected: isSelected)
+                        .offset(y: -34)
+                }
+
+                if let bubbleText = bubbleText {
+                    PixelOfficeBubble(text: bubbleText, color: bubbleColor)
+                        .offset(x: bubbleXOffset, y: -52)
+                }
+
+                VStack(spacing: 0) {
+                    PixelOfficeCharacterSprite(
+                        sheetIndex: agent.spriteIndex,
+                        facing: agent.facing,
+                        state: spriteState,
+                        timestamp: timestamp,
+                        tint: agent.tint,
+                        highlight: isSelected
+                    )
+                    .frame(width: 44, height: 72)
+                }
+                .offset(y: verticalBob)
+            }
+            .frame(width: 88, height: 108)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .scaleEffect(isSelected ? 1.05 : (isHovered ? 1.02 : 1.0))
+        .help("\(agent.displayName) • \(agent.stateLabel)")
+        .onHover { hovering in
+            onHover(hovering ? agent.id : nil)
+        }
+    }
+
+    private var spriteState: PixelCharacterAnimationState {
+        switch agent.taskState {
+        case .working:
+            return .typing
+        case .responding:
+            return .reading
+        case .waiting, .idle, .stale:
+            return .idle
+        case .needsLogin, .quotaLow, .blocked, .error:
+            return .idle
+        }
+    }
+
+    private var bubbleText: String? {
+        switch agent.taskState {
+        case .responding:
+            return "READ"
+        case .waiting:
+            return "WAIT"
+        case .quotaLow:
+            return "LOW"
+        case .needsLogin:
+            return "LOGIN"
+        case .blocked:
+            return "STOP"
+        case .error:
+            return "ERR"
+        case .stale:
+            return "LAG"
+        case .working, .idle:
+            return nil
+        }
+    }
+
+    private var bubbleColor: Color {
+        switch agent.taskState {
+        case .responding:
+            return Color(red: 0.42, green: 0.85, blue: 0.65)
+        case .waiting:
+            return Color(red: 0.35, green: 0.78, blue: 0.98)
+        case .quotaLow, .stale:
+            return Color(red: 0.98, green: 0.76, blue: 0.30)
+        case .needsLogin, .blocked, .error:
+            return Color(red: 0.98, green: 0.45, blue: 0.42)
+        case .working, .idle:
+            return agent.tint
+        }
+    }
+
+    private var bubbleXOffset: CGFloat {
+        switch agent.facing {
+        case .left:
+            return -18
+        case .right:
+            return 18
+        case .down, .up:
+            return agent.zone == .alert ? 18 : 0
+        }
+    }
+
+    private var verticalBob: CGFloat {
+        guard agent.taskState != .blocked && agent.taskState != .needsLogin && agent.taskState != .error else {
+            return 0
+        }
+
+        let amplitude: Double
+        switch agent.zone {
+        case .desk:
+            amplitude = 0.7
+        case .lounge:
+            amplitude = 1.5
+        case .alert:
+            amplitude = 1.0
+        }
+
+        return CGFloat(sin(timestamp * 3.2 + agent.animationOffset) * amplitude)
+    }
+}
+
+private struct PixelOfficeAgentTag: View {
+    let agent: PixelOfficeAgent
+    let isSelected: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 6) {
+                Text(agent.badge)
+                    .font(.system(size: 9, weight: .black, design: .monospaced))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 3)
+                    .background(
+                        Capsule(style: .continuous)
+                            .fill(agent.tint.opacity(0.94))
+                    )
+
+                Text(agent.displayName)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+            }
+
+            Text(agent.stateLabel)
+                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                .foregroundStyle(agent.tint)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 7)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.black.opacity(isSelected ? 0.68 : 0.56))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(agent.tint.opacity(isSelected ? 0.48 : 0.22), lineWidth: 1)
+                )
+        )
+    }
+}
+
+private struct PixelOfficeFocusPanel: View {
+    let agent: PixelOfficeAgent
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text(agent.badge)
+                    .font(.system(size: 10, weight: .black, design: .monospaced))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 4)
+                    .background(Capsule(style: .continuous).fill(agent.tint.opacity(0.95)))
+
+                Text(agent.displayName)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+            }
+
+            Text(agent.stateLabel)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(agent.tint)
+
+            Text(agent.conversationTitle ?? agent.latestUserPromptPreview ?? agent.detailLine)
+                .font(.caption2)
+                .foregroundStyle(Color.white.opacity(0.74))
+                .lineLimit(2)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 9)
+        .frame(width: 184, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color.black.opacity(0.42))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                )
+        )
+    }
+}
+
+private struct PixelOfficeSceneEmptyOverlay: View {
+    let title: String
+    let message: String
+    let buttonTitle: String
+    let action: () -> Void
+
+    var body: some View {
+        VStack(alignment: .center, spacing: 10) {
+            Text(title)
+                .font(.headline.weight(.semibold))
+                .foregroundStyle(.white)
+                .multilineTextAlignment(.center)
+
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(Color.white.opacity(0.72))
+                .multilineTextAlignment(.center)
+
+            Button(buttonTitle) {
+                action()
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+        }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 18)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(Color.black.opacity(0.52))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                )
+        )
+        .padding(20)
+    }
+}
+
+private struct PixelOfficeBubble: View {
+    let text: String
+    let color: Color
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 10, weight: .black, design: .monospaced))
+            .foregroundStyle(Color.black.opacity(0.78))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(color)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .stroke(Color.white.opacity(0.65), lineWidth: 1)
+            )
+            .shadow(color: Color.black.opacity(0.25), radius: 8, y: 4)
+    }
+}
+
+private struct PixelOfficeHUD: View {
+    let summary: PixelOfficeSummary
+    let selectedAgent: PixelOfficeAgent?
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 10) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(summary.title)
+                    .font(.system(size: 11, weight: .black, design: .monospaced))
+                    .foregroundStyle(.white)
+                Text(selectedAgent?.detailLine ?? summary.subtitle)
+                    .font(.caption2)
+                    .foregroundStyle(Color.white.opacity(0.76))
+                    .lineLimit(2)
+            }
+
+            Spacer()
+
+            Text(summary.counters)
+                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                .foregroundStyle(Color.white.opacity(0.82))
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color.black.opacity(0.44))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                )
+        )
+        .padding(12)
+    }
+}
+
+private struct PixelOfficeInspector: View {
+    let agent: PixelOfficeAgent
+    let onRefresh: () -> Void
+    let onLogin: () -> Void
+    let onOpenSource: (() -> Void)?
+    let onOpenDashboard: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 12) {
+                PixelOfficeCharacterSprite(
+                    sheetIndex: agent.spriteIndex,
+                    facing: agent.facing,
+                    state: .idle,
+                    timestamp: 0,
+                    tint: agent.tint,
+                    highlight: true
+                )
+                .frame(width: 42, height: 70)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 8) {
+                        Text(agent.displayName)
+                            .font(.headline.weight(.semibold))
+                        Text(agent.badge)
+                            .font(.system(size: 11, weight: .black, design: .monospaced))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(
+                                Capsule(style: .continuous)
+                                    .fill(agent.tint)
+                            )
+                    }
+
+                    Text(agent.stateLabel)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(agent.tint)
+
+                    Text(agent.detailLine)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(3)
+                }
+            }
+
+            HStack(spacing: 8) {
+                PixelOfficeInspectorBadge(
+                    label: agent.platform.displayName,
+                    tint: agent.tint.opacity(0.18),
+                    foreground: agent.tint
+                )
+
+                if let profileName = agent.profileName, !profileName.isEmpty {
+                    PixelOfficeInspectorBadge(
+                        label: profileName,
+                        tint: Color.white.opacity(0.05),
+                        foreground: .secondary
+                    )
+                }
+
+                if let lastCheckedAt = agent.lastCheckedAt {
+                    PixelOfficeInspectorBadge(
+                        label: relativeTimestamp(from: lastCheckedAt),
+                        tint: Color.white.opacity(0.05),
+                        foreground: .secondary
+                    )
+                }
+            }
+
+            if let resetText = agent.resetText {
+                Text("한도 리셋: \(resetText)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if agent.conversationTitle != nil || agent.latestUserPromptPreview != nil || agent.latestAssistantPreview != nil {
+                PixelOfficeContextSection(agent: agent)
+            }
+
+            if !agent.quotaEntries.isEmpty {
+                PixelOfficeQuotaSection(entries: agent.quotaEntries, accent: agent.tint)
+            }
+
+            HStack(spacing: 8) {
+                Button("대시보드") {
+                    onOpenDashboard()
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+
+                if let onOpenSource {
+                    Button("원본") {
+                        onOpenSource()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+
+                Button("새로고침") {
+                    onRefresh()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+
+                if agent.taskState == .needsLogin || agent.taskState == .error {
+                    Button("로그인") {
+                        onLogin()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+
+                Menu("복사") {
+                    if let conversationTitle = normalized(agent.conversationTitle) {
+                        Button("화면 제목 복사") {
+                            copyTextToPasteboard(conversationTitle)
+                        }
+                    }
+
+                    if let latestUserPromptPreview = normalized(agent.latestUserPromptPreview) {
+                        Button("프롬프트 복사") {
+                            copyTextToPasteboard(latestUserPromptPreview)
+                        }
+                    }
+
+                    if let latestAssistantPreview = normalized(agent.latestAssistantPreview) {
+                        Button("응답 상태 복사") {
+                            copyTextToPasteboard(latestAssistantPreview)
+                        }
+                    }
+
+                    if let sourceURL = agent.sourceURL {
+                        Button("원본 URL 복사") {
+                            copyTextToPasteboard(sourceURL.absoluteString)
+                        }
+                    }
+                }
+                .menuStyle(.borderlessButton)
+                .controlSize(.small)
+            }
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(Color(nsColor: .controlBackgroundColor).opacity(0.72))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .stroke(Color.white.opacity(0.06), lineWidth: 1)
+                )
+        )
+    }
+
+    private func relativeTimestamp(from date: Date) -> String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .short
+        return formatter.localizedString(for: date, relativeTo: Date())
+    }
+
+    private func normalized(_ value: String?) -> String? {
+        guard let value else {
+            return nil
+        }
+
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+}
+
+private struct PixelOfficeContextSection: View {
+    let agent: PixelOfficeAgent
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let conversationTitle = agent.conversationTitle, !conversationTitle.isEmpty {
+                PixelOfficeInfoRow(
+                    title: "현재 화면",
+                    value: conversationTitle,
+                    accent: agent.tint
+                )
+            }
+
+            if let latestUserPromptPreview = agent.latestUserPromptPreview, !latestUserPromptPreview.isEmpty {
+                PixelOfficeInfoRow(
+                    title: "프롬프트",
+                    value: latestUserPromptPreview,
+                    accent: Color(red: 0.36, green: 0.72, blue: 0.98)
+                )
+            }
+
+            if let latestAssistantPreview = agent.latestAssistantPreview, !latestAssistantPreview.isEmpty {
+                PixelOfficeInfoRow(
+                    title: "응답 상태",
+                    value: latestAssistantPreview,
+                    accent: Color(red: 0.42, green: 0.85, blue: 0.65)
+                )
+            }
+        }
+    }
+}
+
+private struct PixelOfficeQuotaSection: View {
+    let entries: [UsageQuotaEntry]
+    let accent: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("핵심 사용량")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            ForEach(entries) { entry in
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(entry.label)
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Text(entry.valueText)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.primary)
+                    }
+
+                    if let progress = entry.progress {
+                        ProgressView(value: min(max(progress, 0), 1))
+                            .tint(progressTint(progress))
+                    }
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(Color(nsColor: .windowBackgroundColor).opacity(0.88))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .stroke(accent.opacity(0.10), lineWidth: 1)
+                        )
+                )
+            }
+        }
+    }
+
+    private func progressTint(_ progress: Double) -> Color {
+        if progress <= 0.2 {
+            return Color(red: 1.0, green: 0.44, blue: 0.46)
+        }
+
+        if progress <= 0.4 {
+            return Color(red: 1.0, green: 0.70, blue: 0.30)
+        }
+
+        return Color(red: 0.16, green: 0.82, blue: 0.40)
+    }
+}
+
+private struct PixelOfficeInfoRow: View {
+    let title: String
+    let value: String
+    let accent: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(accent)
+            Text(value)
+                .font(.caption)
+                .foregroundStyle(.primary)
+                .lineLimit(3)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color(nsColor: .windowBackgroundColor).opacity(0.88))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(accent.opacity(0.12), lineWidth: 1)
+                )
+        )
+    }
+}
+
+private struct PixelOfficeInspectorBadge: View {
+    let label: String
+    let tint: Color
+    let foreground: Color
+
+    var body: some View {
+        Text(label)
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(foreground)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(Capsule(style: .continuous).fill(tint))
+    }
+}
+
+private struct PixelOfficeEmptyInspector: View {
+    let onOpenSettings: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("세션이 아직 없습니다.")
+                .font(.headline)
+            Text("설정에서 Codex 또는 Claude 세션을 추가하면 각 세션이 픽셀 캐릭터로 오피스에 배치됩니다.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            Button("설정 열기", action: onOpenSettings)
+                .buttonStyle(.borderedProminent)
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(Color(nsColor: .controlBackgroundColor).opacity(0.72))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .stroke(Color.white.opacity(0.06), lineWidth: 1)
+                )
+        )
+    }
+}
+
+private struct PixelOfficeFilteredInspector: View {
+    let hiddenCount: Int
+    let onResetFilters: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("필터 때문에 세션이 숨겨져 있습니다.")
+                .font(.headline)
+            Text("현재 등록된 \(hiddenCount)개 세션은 존재하지만, 상태 또는 플랫폼 필터 때문에 화면에서 제외되었습니다.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            Button("필터 초기화", action: onResetFilters)
+                .buttonStyle(.borderedProminent)
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(Color(nsColor: .controlBackgroundColor).opacity(0.72))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .stroke(Color.white.opacity(0.06), lineWidth: 1)
+                )
+        )
+    }
+}
+
+private struct PixelOfficeRosterChip: View {
+    let agent: PixelOfficeAgent
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(agent.tint)
+                        .frame(width: 8, height: 8)
+                    Text(agent.badge)
+                        .font(.system(size: 10, weight: .black, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                }
+
+                Text(agent.displayName)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+
+                Text(agent.stateLabel)
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(agent.tint)
+                    .lineLimit(1)
+            }
+            .padding(10)
+            .frame(width: 132, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(isSelected ? agent.tint.opacity(0.16) : Color(nsColor: .controlBackgroundColor).opacity(0.62))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .stroke(isSelected ? agent.tint.opacity(0.55) : Color.white.opacity(0.06), lineWidth: 1)
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+        .help("\(agent.displayName) • \(agent.stateLabel)")
+    }
+}
+
+private func copyTextToPasteboard(_ value: String) {
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(value, forType: .string)
+}
