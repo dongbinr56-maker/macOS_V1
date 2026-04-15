@@ -148,9 +148,13 @@ final class AccountStore {
     private let defaults: UserDefaults
     private let inMemoryOnly: Bool
     private let legacyAccountsKey = "ai-web-usage-monitor.accounts"
+    private let backupAccountsKey = "ai-web-usage-monitor.accounts-backup-v3"
     private let migrationFlagKey = "ai-web-usage-monitor.storage-migrated-v2"
     private let container: ModelContainer
     private let context: ModelContext
+    private let encoder = JSONEncoder()
+    private let decoder = JSONDecoder()
+    private let isUsingFallbackStore: Bool
 
     init(defaults: UserDefaults = .standard, inMemoryOnly: Bool = false) {
         self.defaults = defaults
@@ -167,6 +171,7 @@ final class AccountStore {
             let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: inMemoryOnly)
             let container = try ModelContainer(for: schema, configurations: [configuration])
             self.container = container
+            self.isUsingFallbackStore = inMemoryOnly
         } catch {
             guard !inMemoryOnly else {
                 fatalError("SwiftData 초기화 실패: \(error.localizedDescription)")
@@ -175,6 +180,8 @@ final class AccountStore {
                 let fallbackConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
                 let container = try ModelContainer(for: schema, configurations: [fallbackConfiguration])
                 self.container = container
+                self.isUsingFallbackStore = true
+                assertionFailure("영구 저장소 초기화 실패로 메모리 저장소로 폴백했습니다: \(error.localizedDescription)")
             } catch {
                 fatalError("SwiftData 초기화 실패: \(error.localizedDescription)")
             }
@@ -193,6 +200,14 @@ final class AccountStore {
         let sessions = (try? context.fetch(FetchDescriptor<StoredSession>())) ?? []
         let snapshots = (try? context.fetch(FetchDescriptor<StoredSnapshot>())) ?? []
         let quotaMetrics = (try? context.fetch(FetchDescriptor<StoredQuotaMetric>())) ?? []
+
+        if sessions.isEmpty {
+            let backupAccounts = loadBackupAccounts()
+            if !backupAccounts.isEmpty {
+                restoreSwiftDataIfNeeded(from: backupAccounts)
+                return backupAccounts.sorted { $0.createdAt < $1.createdAt }
+            }
+        }
 
         let snapshotsBySessionID = Dictionary(uniqueKeysWithValues: snapshots.map { ($0.sessionID, $0) })
         let metricsBySessionID = Dictionary(grouping: quotaMetrics, by: \.sessionID)
@@ -263,6 +278,8 @@ final class AccountStore {
     }
 
     func saveAccounts(_ accounts: [WebAccountSession]) {
+        persistBackupAccounts(accounts)
+
         let existingSessions = (try? context.fetch(FetchDescriptor<StoredSession>())) ?? []
         let existingSnapshots = (try? context.fetch(FetchDescriptor<StoredSnapshot>())) ?? []
         let existingQuotaMetrics = (try? context.fetch(FetchDescriptor<StoredQuotaMetric>())) ?? []
@@ -438,7 +455,6 @@ final class AccountStore {
             return
         }
 
-        let decoder = JSONDecoder()
         let accounts = (try? decoder.decode([WebAccountSession].self, from: data)) ?? []
         saveAccounts(accounts)
         defaults.removeObject(forKey: legacyAccountsKey)
@@ -461,5 +477,41 @@ final class AccountStore {
 
         let sessionID = String(components[1])
         return UUID(uuidString: sessionID) != nil ? sessionID : nil
+    }
+
+    private func loadBackupAccounts() -> [WebAccountSession] {
+        guard let data = defaults.data(forKey: backupAccountsKey),
+              let accounts = try? decoder.decode([WebAccountSession].self, from: data) else {
+            return []
+        }
+
+        return accounts
+    }
+
+    private func persistBackupAccounts(_ accounts: [WebAccountSession]) {
+        guard !accounts.isEmpty else {
+            defaults.removeObject(forKey: backupAccountsKey)
+            return
+        }
+
+        guard let data = try? encoder.encode(accounts) else {
+            assertionFailure("세션 백업 인코딩 실패")
+            return
+        }
+
+        defaults.set(data, forKey: backupAccountsKey)
+    }
+
+    private func restoreSwiftDataIfNeeded(from accounts: [WebAccountSession]) {
+        guard !isUsingFallbackStore else {
+            return
+        }
+
+        let existingSessionCount = ((try? context.fetch(FetchDescriptor<StoredSession>())) ?? []).count
+        guard existingSessionCount == 0 else {
+            return
+        }
+
+        saveAccounts(accounts)
     }
 }

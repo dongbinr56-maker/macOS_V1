@@ -20,6 +20,15 @@ swift test
 ./scripts/build_app.sh
 ```
 
+## Documentation
+
+Behavior changes must update the matching document.
+
+- User-facing overview: `README.md`
+- Architecture and data flow: `docs/ARCHITECTURE.md`
+- Pixel Office rules and movement: `docs/PIXEL_OFFICE.md`
+- Build, CI, and troubleshooting: `docs/OPERATIONS.md`
+
 ## Pull Request Checklist
 
 Before opening a PR, make sure all of the following are true:
@@ -28,7 +37,7 @@ Before opening a PR, make sure all of the following are true:
 - The test suite passes with `swift test`
 - The app bundle still builds with `./scripts/build_app.sh`
 - UI changes were checked in the menu bar popover for both `Office` and `List` modes
-- README or inline documentation was updated when behavior changed
+- README and the relevant file under `docs/` were updated when behavior changed
 
 ## Scraper Changes
 

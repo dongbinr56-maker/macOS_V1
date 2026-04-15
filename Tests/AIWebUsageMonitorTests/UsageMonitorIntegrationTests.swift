@@ -203,6 +203,38 @@ final class UsageMonitorIntegrationTests: XCTestCase {
         XCTAssertTrue(store.loadAlertStates().isEmpty)
     }
 
+    func testAccountStoreRestoresAccountsFromBackupWhenStoreIsEphemeral() throws {
+        let suiteName = "AIWebUsageMonitorTests.\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            XCTFail("테스트 UserDefaults를 생성하지 못했습니다.")
+            return
+        }
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        let originalStore = AccountStore(defaults: defaults, inMemoryOnly: true)
+        let account = WebAccountSession(
+            id: UUID(),
+            platform: .cursor,
+            displayName: "Cursor Persisted",
+            profileName: "cursor@example.com",
+            dataStoreID: UUID(),
+            refreshState: .ready,
+            lastCheckedAt: Date()
+        )
+
+        originalStore.saveAccounts([account])
+
+        let reloadedStore = AccountStore(defaults: defaults, inMemoryOnly: true)
+        let restored = try XCTUnwrap(reloadedStore.loadAccounts().first)
+
+        XCTAssertEqual(restored.id, account.id)
+        XCTAssertEqual(restored.displayName, "Cursor Persisted")
+        XCTAssertEqual(restored.profileName, "cursor@example.com")
+        XCTAssertEqual(reloadedStore.loadAccounts().count, 1)
+    }
+
     func testLoggedOutPayloadClearsSnapshotAndMarksSessionAsLoginRequired() throws {
         let suiteName = "AIWebUsageMonitorTests.\(UUID().uuidString)"
         guard let defaults = UserDefaults(suiteName: suiteName) else {

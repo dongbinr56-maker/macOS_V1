@@ -1,6 +1,7 @@
 import XCTest
 @testable import AIWebUsageMonitor
 
+@MainActor
 final class PixelOfficeSceneBuilderTests: XCTestCase {
     func testAgentsAreSortedBySeverityAndMappedToZones() {
         let blocked = descriptor(
@@ -28,8 +29,9 @@ final class PixelOfficeSceneBuilderTests: XCTestCase {
         let agents = PixelOfficeSceneBuilder.makeAgents(from: [idle, working, blocked])
 
         XCTAssertEqual(agents.map(\.displayName), ["Claude Blocked", "Codex Working", "Codex Idle"])
-        XCTAssertEqual(agents.map(\.zone), [.alert, .desk, .lounge])
-        XCTAssertEqual(agents.map(\.facing), [.right, .up, .right])
+        XCTAssertEqual(agents.map(\.zone), [.lounge, .desk, .lounge])
+        XCTAssertEqual(agents.map(\.facing), [.right, .up, .left])
+        XCTAssertEqual(agents.map(\.isAlerting), [true, false, false])
         XCTAssertEqual(agents[0].stateLabel, "사용 불가")
         XCTAssertEqual(agents[1].stateLabel, "응답 생성 중")
     }
@@ -46,8 +48,8 @@ final class PixelOfficeSceneBuilderTests: XCTestCase {
         let summary = PixelOfficeSceneBuilder.summary(for: agents)
 
         XCTAssertEqual(summary.title, "경고 상태 감지")
-        XCTAssertEqual(summary.subtitle, "1 desks · 1 lounge · 1 alerts")
-        XCTAssertEqual(summary.counters, "1|1|1")
+        XCTAssertEqual(summary.subtitle, "2 desks · 0 lounge · 1 alerts")
+        XCTAssertEqual(summary.counters, "2|0|1")
     }
 
     func testDetailLineFallsBackToAvailabilityAndActivity() {
@@ -120,6 +122,94 @@ final class PixelOfficeSceneBuilderTests: XCTestCase {
         XCTAssertEqual(queue.map(\.displayName), ["Responding", "Working", "Waiting"])
     }
 
+    func testWaitingAgentsUseDeskZone() {
+        let agents = PixelOfficeSceneBuilder.makeAgents(
+            from: [
+                descriptor(name: "Waiting", platform: .codex, availability: .available, taskState: .waiting),
+                descriptor(name: "Idle", platform: .claude, availability: .available, taskState: .idle)
+            ]
+        )
+
+        XCTAssertEqual(agents.first(where: { $0.displayName == "Waiting" })?.zone, .desk)
+        XCTAssertEqual(agents.first(where: { $0.displayName == "Idle" })?.zone, .lounge)
+    }
+
+    func testUnavailableAgentsUseLoungeSeatsButRemainAlerting() throws {
+        let agents = PixelOfficeSceneBuilder.makeAgents(
+            from: [
+                descriptor(name: "Blocked", platform: .codex, availability: .blocked, taskState: .blocked),
+                descriptor(name: "Needs Login", platform: .claude, availability: .available, taskState: .needsLogin),
+                descriptor(name: "Error", platform: .cursor, availability: .available, taskState: .error)
+            ]
+        )
+
+        XCTAssertEqual(agents.map(\.zone), [.lounge, .lounge, .lounge])
+        XCTAssertTrue(agents.allSatisfy(\.isAlerting))
+        XCTAssertTrue(agents.allSatisfy(\.isUnavailableForWork))
+        XCTAssertEqual(PixelOfficeSceneBuilder.alertQueue(from: agents).map(\.displayName), ["Blocked", "Needs Login", "Error"])
+
+        let pose = PixelOfficeSceneBuilder.currentNormalizedPose(
+            for: agents[0],
+            timestamp: 0
+        )
+        XCTAssertTrue(pose.isSeated)
+        switch pose.animationState {
+        case .idle:
+            break
+        case .walking, .typing, .reading:
+            XCTFail("Unavailable agents should stay idle on the lounge seats.")
+        }
+    }
+
+    func testTransitionWaypointsStayOnWalkableFloorTiles() throws {
+        let loungeAgent = try XCTUnwrap(
+            PixelOfficeSceneBuilder
+                .makeAgents(from: [descriptor(name: "Idle", platform: .codex, availability: .available, taskState: .idle)])
+                .first
+        )
+        let deskAgent = try XCTUnwrap(
+            PixelOfficeSceneBuilder
+                .makeAgents(from: [descriptor(name: "Working", platform: .claude, availability: .available, taskState: .working)])
+                .first
+        )
+
+        let plan = try XCTUnwrap(
+            PixelOfficeSceneBuilder.transitionPlan(
+                from: loungeAgent.position,
+                previousAgent: loungeAgent,
+                to: deskAgent,
+                startTime: 0
+            )
+        )
+
+        let interiorWaypoints = Array(plan.path.dropFirst().dropLast())
+        XCTAssertFalse(interiorWaypoints.isEmpty)
+        let safeWaypoints: [CGPoint] = [
+            normalizedPoint(col: 15, row: 16),
+            normalizedPoint(col: 14, row: 14),
+            normalizedPoint(col: 10, row: 17),
+            normalizedPoint(col: 8, row: 14),
+            normalizedPoint(col: 8, row: 11),
+            normalizedPoint(col: 9, row: 14),
+            normalizedPoint(col: 9, row: 11),
+            normalizedPoint(col: 16, row: 11),
+            normalizedPoint(col: 15, row: 11)
+        ]
+        XCTAssertTrue(
+            interiorWaypoints.allSatisfy { point in
+                safeWaypoints.contains { candidate in
+                    abs(candidate.x - point.x) <= 0.0001 && abs(candidate.y - point.y) <= 0.0001
+                }
+            },
+            interiorWaypoints.map { point in
+                let allowed = safeWaypoints.contains { candidate in
+                    abs(candidate.x - point.x) <= 0.0001 && abs(candidate.y - point.y) <= 0.0001
+                }
+                return "(\(String(format: "%.6f", point.x)), \(String(format: "%.6f", point.y))) allowed=\(allowed)"
+            }.joined(separator: ", ")
+        )
+    }
+
     private func descriptor(
         name: String,
         platform: AIPlatform,
@@ -147,5 +237,9 @@ final class PixelOfficeSceneBuilderTests: XCTestCase {
             lastMeaningfulActivityAt: nil,
             sourceConfidence: 0
         )
+    }
+
+    private func normalizedPoint(col: Int, row: Int) -> CGPoint {
+        PixelOfficeSceneLayout.normalizedPosition(for: PixelOfficeTilePoint(col: col, row: row))
     }
 }

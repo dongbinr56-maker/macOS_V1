@@ -1,6 +1,122 @@
 import AppKit
 import SwiftUI
 
+private struct PixelOfficeMotionFingerprint: Equatable {
+    let id: UUID
+    let zone: PixelOfficeZone
+    let taskState: SessionTaskState
+    let position: CGPoint
+}
+
+@MainActor
+private final class PixelOfficeMotionCoordinator: ObservableObject {
+    private struct TrackedAgent {
+        var agent: PixelOfficeAgent
+        var transition: PixelOfficeTransitionPlan?
+    }
+
+    private var trackedAgents: [UUID: TrackedAgent] = [:]
+    private let unitSceneRect = CGRect(x: 0, y: 0, width: 1, height: 1)
+
+    func sync(with agents: [PixelOfficeAgent], at timestamp: TimeInterval) {
+        var updated: [UUID: TrackedAgent] = [:]
+
+        for agent in agents {
+            guard let existing = trackedAgents[agent.id] else {
+                updated[agent.id] = TrackedAgent(agent: agent, transition: nil)
+                continue
+            }
+
+            let currentPose = pose(for: existing, timestamp: timestamp, in: unitSceneRect)
+            let transition = transition(
+                from: existing,
+                to: agent,
+                currentPoint: currentPose.point,
+                timestamp: timestamp
+            )
+
+            updated[agent.id] = TrackedAgent(
+                agent: agent,
+                transition: transition
+            )
+        }
+
+        trackedAgents = updated
+    }
+
+    func pose(
+        for agent: PixelOfficeAgent,
+        timestamp: TimeInterval,
+        metrics: PixelOfficeSceneMetrics
+    ) -> PixelOfficeAnimatedPose {
+        let tracked = trackedAgents[agent.id] ?? TrackedAgent(agent: agent, transition: nil)
+        return pose(for: tracked, timestamp: timestamp, in: metrics.sceneRect)
+    }
+
+    private func pose(
+        for tracked: TrackedAgent,
+        timestamp: TimeInterval,
+        in sceneRect: CGRect
+    ) -> PixelOfficeAnimatedPose {
+        if let transition = tracked.transition,
+           let pose = PixelOfficeSceneBuilder.transitionPose(
+               for: transition,
+               targetAgent: tracked.agent,
+               timestamp: timestamp,
+               in: sceneRect
+           ) {
+            return pose
+        }
+
+        return PixelOfficeSceneBuilder.scenePose(
+            for: tracked.agent,
+            timestamp: timestamp,
+            in: sceneRect
+        )
+    }
+
+    private func transition(
+        from existing: TrackedAgent,
+        to nextAgent: PixelOfficeAgent,
+        currentPoint: CGPoint,
+        timestamp: TimeInterval
+    ) -> PixelOfficeTransitionPlan? {
+        guard needsTransition(from: existing.agent, to: nextAgent, currentPoint: currentPoint) else {
+            return existing.transition.flatMap { transition in
+                transition.endTime > timestamp ? transition : nil
+            }
+        }
+
+        return PixelOfficeSceneBuilder.transitionPlan(
+            from: currentPoint,
+            previousAgent: existing.agent,
+            to: nextAgent,
+            startTime: timestamp
+        )
+    }
+
+    private func needsTransition(
+        from currentAgent: PixelOfficeAgent,
+        to nextAgent: PixelOfficeAgent,
+        currentPoint: CGPoint
+    ) -> Bool {
+        if currentAgent.zone != nextAgent.zone {
+            return true
+        }
+
+        if currentAgent.taskState != nextAgent.taskState,
+           currentAgent.taskState == .idle || nextAgent.taskState == .idle || nextAgent.taskState == .waiting {
+            return true
+        }
+
+        return distance(from: currentPoint, to: nextAgent.position) > 0.008
+    }
+
+    private func distance(from lhs: CGPoint, to rhs: CGPoint) -> CGFloat {
+        hypot(lhs.x - rhs.x, lhs.y - rhs.y)
+    }
+}
+
 struct PixelOfficeView: View {
     let sessions: [WebAccountSession]
     @ObservedObject var viewModel: UsageMonitorViewModel
@@ -187,6 +303,18 @@ private struct PixelOfficeSceneCard: View {
     let onHover: (UUID?) -> Void
     let onResetFilters: () -> Void
     let onOpenSettings: () -> Void
+    @StateObject private var motionCoordinator = PixelOfficeMotionCoordinator()
+
+    private var motionFingerprint: [PixelOfficeMotionFingerprint] {
+        agents.map {
+            PixelOfficeMotionFingerprint(
+                id: $0.id,
+                zone: $0.zone,
+                taskState: $0.taskState,
+                position: $0.position
+            )
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -230,6 +358,7 @@ private struct PixelOfficeSceneCard: View {
             TimelineView(.animation(minimumInterval: 1.0 / 8.0, paused: false)) { context in
                 PixelOfficeScene(
                     agents: agents,
+                    motionCoordinator: motionCoordinator,
                     selectedAgentID: selectedAgentID,
                     focusedAgent: focusedAgent,
                     timestamp: context.date.timeIntervalSinceReferenceDate,
@@ -262,6 +391,18 @@ private struct PixelOfficeSceneCard: View {
         }
         .padding(14)
         .background(cardBackground)
+        .onAppear {
+            motionCoordinator.sync(
+                with: agents,
+                at: Date.timeIntervalSinceReferenceDate
+            )
+        }
+        .onChange(of: motionFingerprint) { _, _ in
+            motionCoordinator.sync(
+                with: agents,
+                at: Date.timeIntervalSinceReferenceDate
+            )
+        }
     }
 
     private var sceneSubtitle: String {
@@ -275,7 +416,7 @@ private struct PixelOfficeSceneCard: View {
 
         let blocked = agents.filter(\.isAlerting).count
         if blocked > 0 {
-            return "\(blocked)개의 세션이 경고 상태라 보드 앞에 배치되었습니다."
+            return "\(blocked)개의 세션이 경고 상태로 표시되고 있습니다."
         }
 
         let working = agents.filter { $0.zone == .desk }.count
@@ -515,6 +656,7 @@ private struct PixelOfficeFilterRow<Item: Identifiable>: View where Item.ID == S
 
 private struct PixelOfficeScene: View {
     let agents: [PixelOfficeAgent]
+    let motionCoordinator: PixelOfficeMotionCoordinator
     let selectedAgentID: UUID?
     let focusedAgent: PixelOfficeAgent?
     let timestamp: TimeInterval
@@ -524,12 +666,11 @@ private struct PixelOfficeScene: View {
     var body: some View {
         GeometryReader { proxy in
             let metrics = PixelOfficeSceneLayout.metrics(in: proxy.size)
-            let furniture = PixelOfficeSceneLayout.furniture(in: metrics)
             let renderedAgents = agents
                 .map { agent in
                     (
                         agent,
-                        PixelOfficeSceneLayout.animatedPose(
+                        motionCoordinator.pose(
                             for: agent,
                             timestamp: timestamp,
                             metrics: metrics
@@ -546,13 +687,6 @@ private struct PixelOfficeScene: View {
 
             ZStack {
                 PixelOfficeBackdrop(metrics: metrics)
-                ForEach(furniture.backLayer) { item in
-                    PixelOfficeFurnitureView(item: item, timestamp: timestamp)
-                }
-
-                ForEach(furniture.middleLayer) { item in
-                    PixelOfficeFurnitureView(item: item, timestamp: timestamp)
-                }
 
                 ForEach(renderedAgents, id: \.0.id) { rendered in
                     PixelOfficeAgentView(
@@ -566,10 +700,7 @@ private struct PixelOfficeScene: View {
                         onSelect(rendered.0.id)
                     }
                     .position(rendered.1.point)
-                }
-
-                ForEach(furniture.frontLayer) { item in
-                    PixelOfficeFurnitureView(item: item, timestamp: timestamp)
+                    .zIndex(Double(rendered.1.point.y - metrics.origin.y + metrics.tileSize / 2 + 0.5))
                 }
             }
         }
@@ -590,65 +721,27 @@ private struct PixelOfficeBackdrop: View {
     let metrics: PixelOfficeSceneMetrics
 
     var body: some View {
-        let officeRect = metrics.rect(col: 0, row: 0, width: 11, height: 22)
-        let utilityRect = metrics.rect(col: 11, row: 0, width: 10, height: 7)
-        let loungeRect = metrics.rect(col: 11, row: 7, width: 10, height: 15)
-        let verticalWallTop = metrics.rect(col: 10, row: 0, width: 1, height: 15)
-        let verticalWallBottom = metrics.rect(col: 10, row: 18, width: 1, height: 4)
-        let utilityDivider = metrics.rect(col: 11, row: 6, width: 10, height: 1)
-        let topAccent = CGRect(x: metrics.sceneRect.minX, y: metrics.sceneRect.minY, width: metrics.sceneRect.width, height: 2)
+        let backdrop = PixelOfficeSourceLayoutStore.shared.backdropImage(in: metrics)
 
         ZStack {
             Color(red: 0.05, green: 0.06, blue: 0.11)
 
-            Rectangle()
-                .fill(Color(red: 0.11, green: 0.09, blue: 0.14))
-                .frame(width: metrics.sceneRect.width + metrics.tileSize * 2, height: metrics.sceneRect.height + metrics.tileSize * 2)
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color(red: 0.03, green: 0.04, blue: 0.08))
+                .frame(width: metrics.sceneSize.width, height: metrics.sceneSize.height)
                 .position(x: metrics.sceneRect.midX, y: metrics.sceneRect.midY)
 
-            PixelOfficeTiledArea(
-                subpath: "floors/floor_7.png",
-                rect: officeRect,
-                tileSize: metrics.tileSize
-            )
-
-            PixelOfficeTiledArea(
-                subpath: "floors/floor_1.png",
-                rect: utilityRect,
-                tileSize: metrics.tileSize
-            )
-
-            PixelOfficeTiledArea(
-                subpath: "floors/floor_8.png",
-                rect: loungeRect,
-                tileSize: metrics.tileSize
-            )
-
-            Group {
-                Rectangle()
-                    .fill(Color(red: 0.11, green: 0.15, blue: 0.22))
-                    .frame(width: verticalWallTop.width, height: verticalWallTop.height)
-                    .position(x: verticalWallTop.midX, y: verticalWallTop.midY)
-
-                Rectangle()
-                    .fill(Color(red: 0.11, green: 0.15, blue: 0.22))
-                    .frame(width: verticalWallBottom.width, height: verticalWallBottom.height)
-                    .position(x: verticalWallBottom.midX, y: verticalWallBottom.midY)
-
-                Rectangle()
-                    .fill(Color(red: 0.11, green: 0.15, blue: 0.22))
-                    .frame(width: utilityDivider.width, height: utilityDivider.height)
-                    .position(x: utilityDivider.midX, y: utilityDivider.midY)
+            if let backdrop {
+                Image(nsImage: backdrop)
+                    .resizable()
+                    .interpolation(.none)
+                    .frame(width: metrics.sceneSize.width, height: metrics.sceneSize.height)
+                    .position(x: metrics.sceneRect.midX, y: metrics.sceneRect.midY)
             }
-
-            Rectangle()
-                .fill(Color(red: 0.55, green: 0.21, blue: 0.25))
-                .frame(width: topAccent.width, height: topAccent.height)
-                .position(x: topAccent.midX, y: topAccent.midY)
 
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .stroke(Color.white.opacity(0.05), lineWidth: 1)
-                .frame(width: metrics.sceneRect.width, height: metrics.sceneRect.height)
+                .frame(width: metrics.sceneSize.width, height: metrics.sceneSize.height)
                 .position(x: metrics.sceneRect.midX, y: metrics.sceneRect.midY)
 
             Rectangle()
@@ -659,7 +752,7 @@ private struct PixelOfficeBackdrop: View {
                         endPoint: .bottom
                     )
                 )
-                .frame(width: metrics.sceneRect.width, height: metrics.sceneRect.height)
+                .frame(width: metrics.sceneSize.width, height: metrics.sceneSize.height)
                 .position(x: metrics.sceneRect.midX, y: metrics.sceneRect.midY)
         }
     }
@@ -723,7 +816,12 @@ private struct PixelOfficeFurnitureView: View {
 
     @ViewBuilder
     private var furnitureBody: some View {
-        if item.subpath.hasPrefix("custom:") {
+        if let resolvedImage = item.resolvedImage {
+            Image(nsImage: resolvedImage)
+                .resizable()
+                .interpolation(.none)
+                .aspectRatio(contentMode: .fit)
+        } else if item.subpath.hasPrefix("custom:") {
             PixelOfficeCustomFurnitureView(kind: item.subpath, size: item.size)
         } else {
             PixelOfficeImage(subpath: item.subpath, size: item.size)
@@ -1060,7 +1158,7 @@ private struct PixelOfficeAgentView: View {
         case .right:
             return 18
         case .down, .up:
-            return agent.zone == .alert ? 18 : 0
+            return agent.isAlerting ? 18 : 0
         }
     }
 

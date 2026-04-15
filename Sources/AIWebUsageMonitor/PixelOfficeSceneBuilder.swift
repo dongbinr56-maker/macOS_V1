@@ -38,7 +38,21 @@ struct PixelOfficeAgent: Identifiable {
     let quotaEntries: [UsageQuotaEntry]
 
     var isAlerting: Bool {
-        zone == .alert
+        switch taskState {
+        case .needsLogin, .quotaLow, .blocked, .stale, .error:
+            return true
+        case .working, .responding, .waiting, .idle:
+            return false
+        }
+    }
+
+    var isUnavailableForWork: Bool {
+        switch taskState {
+        case .needsLogin, .blocked, .error:
+            return true
+        case .working, .responding, .waiting, .idle, .quotaLow, .stale:
+            return false
+        }
     }
 
     var stateLabel: String {
@@ -137,7 +151,7 @@ struct PixelOfficeAgentFilter {
         case .working:
             agent.taskState == .working || agent.taskState == .responding || agent.taskState == .waiting
         case .alerts:
-            agent.zone == .alert
+            agent.isAlerting
         case .idle:
             agent.taskState == .idle || agent.taskState == .stale
         }
@@ -198,6 +212,7 @@ struct PixelFurniturePlacement: Identifiable {
     let subpath: String
     let position: CGPoint
     let size: CGSize
+    var resolvedImage: NSImage? = nil
     var mirrored: Bool = false
     var opacity: Double = 1
     var brightness: Double = 0
@@ -215,11 +230,15 @@ struct PixelOfficeFurnitureLayers {
 struct PixelOfficeSceneMetrics {
     let tileSize: CGFloat
     let origin: CGPoint
+    let minCol: Int
+    let minRow: Int
+    let visibleColumns: Int
+    let visibleRows: Int
 
     var sceneSize: CGSize {
         CGSize(
-            width: CGFloat(PixelOfficeSceneLayout.columns) * tileSize,
-            height: CGFloat(PixelOfficeSceneLayout.rows) * tileSize
+            width: CGFloat(visibleColumns) * tileSize,
+            height: CGFloat(visibleRows) * tileSize
         )
     }
 
@@ -229,15 +248,15 @@ struct PixelOfficeSceneMetrics {
 
     func center(of tile: PixelOfficeTilePoint) -> CGPoint {
         CGPoint(
-            x: origin.x + (CGFloat(tile.col) + 0.5) * tileSize,
-            y: origin.y + (CGFloat(tile.row) + 0.5) * tileSize
+            x: origin.x + (CGFloat(tile.col - minCol) + 0.5) * tileSize,
+            y: origin.y + (CGFloat(tile.row - minRow) + 0.5) * tileSize
         )
     }
 
     func rect(col: Int, row: Int, width: Int, height: Int) -> CGRect {
         CGRect(
-            x: origin.x + CGFloat(col) * tileSize,
-            y: origin.y + CGFloat(row) * tileSize,
+            x: origin.x + CGFloat(col - minCol) * tileSize,
+            y: origin.y + CGFloat(row - minRow) * tileSize,
             width: CGFloat(width) * tileSize,
             height: CGFloat(height) * tileSize
         )
@@ -253,19 +272,25 @@ struct PixelOfficeSceneMetrics {
     func spritePosition(col: Int, row: Int, pixelWidth: CGFloat, pixelHeight: CGFloat) -> CGPoint {
         let size = spriteSize(pixelWidth: pixelWidth, pixelHeight: pixelHeight)
         return CGPoint(
-            x: origin.x + CGFloat(col) * tileSize + size.width / 2,
-            y: origin.y + CGFloat(row) * tileSize + size.height / 2
+            x: origin.x + CGFloat(col - minCol) * tileSize + size.width / 2,
+            y: origin.y + CGFloat(row - minRow) * tileSize + size.height / 2
         )
+    }
+
+    func bottomAlignedSpritePosition(col: Int, row: Int, pixelWidth: CGFloat, pixelHeight: CGFloat) -> CGPoint {
+        let size = spriteSize(pixelWidth: pixelWidth, pixelHeight: pixelHeight)
+        return CGPoint(
+            x: origin.x + CGFloat(col - minCol) * tileSize + size.width / 2,
+            y: origin.y + CGFloat(row - minRow + 1) * tileSize - size.height / 2
+        )
+    }
+
+    func yOffset(forRow row: Int) -> CGFloat {
+        CGFloat(row - minRow) * tileSize
     }
 }
 
-struct PixelOfficeAnimatedPose {
-    let point: CGPoint
-    let facing: PixelCharacterFacing
-    let animationState: PixelCharacterAnimationState
-    let isSeated: Bool
-}
-
+@MainActor
 enum PixelOfficeSceneLayout {
     static let columns = 21
     static let rows = 22
@@ -278,13 +303,24 @@ enum PixelOfficeSceneLayout {
     }
 
     static func metrics(in size: CGSize) -> PixelOfficeSceneMetrics {
-        let tileSize = max(CGFloat(12), floor(min(size.width / CGFloat(columns), size.height / CGFloat(rows))))
-        let sceneSize = CGSize(width: CGFloat(columns) * tileSize, height: CGFloat(rows) * tileSize)
+        let bounds = PixelOfficeSourceLayoutStore.shared.visibleBounds
+        let tileSize = max(
+            CGFloat(12),
+            floor(min(size.width / CGFloat(bounds.columns), size.height / CGFloat(bounds.rows)))
+        )
+        let sceneSize = CGSize(width: CGFloat(bounds.columns) * tileSize, height: CGFloat(bounds.rows) * tileSize)
         let origin = CGPoint(
             x: round((size.width - sceneSize.width) / 2),
             y: round((size.height - sceneSize.height) / 2)
         )
-        return PixelOfficeSceneMetrics(tileSize: tileSize, origin: origin)
+        return PixelOfficeSceneMetrics(
+            tileSize: tileSize,
+            origin: origin,
+            minCol: bounds.minCol,
+            minRow: bounds.minRow,
+            visibleColumns: bounds.columns,
+            visibleRows: bounds.rows
+        )
     }
 
     static func furniture(in metrics: PixelOfficeSceneMetrics) -> PixelOfficeFurnitureLayers {
@@ -624,31 +660,94 @@ enum PixelOfficeSceneLayout {
     }
 }
 
+struct PixelOfficeAnimatedPose {
+    let point: CGPoint
+    let facing: PixelCharacterFacing
+    let animationState: PixelCharacterAnimationState
+    let isSeated: Bool
+}
+
+struct PixelOfficeTransitionPlan {
+    let path: [CGPoint]
+    let segmentDurations: [Double]
+    let startTime: TimeInterval
+
+    var endTime: TimeInterval {
+        startTime + segmentDurations.reduce(0, +)
+    }
+}
+
+@MainActor
 enum PixelOfficeSceneBuilder {
     private struct PixelOfficeAnchor {
         let tile: PixelOfficeTilePoint
         let facing: PixelCharacterFacing
+        let scenePoint: CGPoint
     }
 
-    private static let deskSlots: [PixelOfficeAnchor] = [
-        .init(tile: PixelOfficeTilePoint(col: 4, row: 16), facing: .up),
-        .init(tile: PixelOfficeTilePoint(col: 8, row: 16), facing: .up),
-        .init(tile: PixelOfficeTilePoint(col: 4, row: 9), facing: .up),
-        .init(tile: PixelOfficeTilePoint(col: 8, row: 9), facing: .up)
-    ]
+    private static let unitSceneRect = CGRect(x: 0, y: 0, width: 1, height: 1)
+    private static var deskAisleLower: CGPoint { tileWaypoint(col: 8, row: 14) }
+    private static var deskAisleUpper: CGPoint { tileWaypoint(col: 8, row: 11) }
+    private static var rightDoorway: CGPoint { tileWaypoint(col: 10, row: 17) }
+    private static var loungeCenter: CGPoint { tileWaypoint(col: 15, row: 16) }
+    private static var loungeBookcase: CGPoint { tileWaypoint(col: 14, row: 14) }
+    private static var utilityCenter: CGPoint { tileWaypoint(col: 16, row: 11) }
+    private static var utilityLeft: CGPoint { tileWaypoint(col: 15, row: 11) }
 
-    private static let loungeSlots: [PixelOfficeAnchor] = [
-        .init(tile: PixelOfficeTilePoint(col: 13, row: 15), facing: .right),
-        .init(tile: PixelOfficeTilePoint(col: 17, row: 15), facing: .left),
-        .init(tile: PixelOfficeTilePoint(col: 11, row: 15), facing: .down),
-        .init(tile: PixelOfficeTilePoint(col: 15, row: 18), facing: .up)
-    ]
+    private static var deskSlots: [PixelOfficeAnchor] {
+        let seats = PixelOfficeSourceLayoutStore.shared.deskSeats
+        if !seats.isEmpty {
+            return seats.map {
+                PixelOfficeAnchor(
+                    tile: $0.tile,
+                    facing: $0.facing,
+                    scenePoint: PixelOfficeSceneLayout.normalizedPosition(for: $0.tile)
+                )
+            }
+        }
 
-    private static let alertSlots: [PixelOfficeAnchor] = [
-        .init(tile: PixelOfficeTilePoint(col: 12, row: 13), facing: .right),
-        .init(tile: PixelOfficeTilePoint(col: 15, row: 4), facing: .down),
-        .init(tile: PixelOfficeTilePoint(col: 18, row: 4), facing: .left)
-    ]
+        return [
+            .init(tile: PixelOfficeTilePoint(col: 4, row: 16), facing: .up, scenePoint: PixelOfficeSceneLayout.normalizedPosition(for: PixelOfficeTilePoint(col: 4, row: 16))),
+            .init(tile: PixelOfficeTilePoint(col: 8, row: 16), facing: .up, scenePoint: PixelOfficeSceneLayout.normalizedPosition(for: PixelOfficeTilePoint(col: 8, row: 16))),
+            .init(tile: PixelOfficeTilePoint(col: 4, row: 9), facing: .up, scenePoint: PixelOfficeSceneLayout.normalizedPosition(for: PixelOfficeTilePoint(col: 4, row: 9))),
+            .init(tile: PixelOfficeTilePoint(col: 8, row: 9), facing: .up, scenePoint: PixelOfficeSceneLayout.normalizedPosition(for: PixelOfficeTilePoint(col: 8, row: 9)))
+        ]
+    }
+
+    private static var loungeSlots: [PixelOfficeAnchor] {
+        let seats = PixelOfficeSourceLayoutStore.shared.loungeSeats
+        if !seats.isEmpty {
+            return seats.map {
+                PixelOfficeAnchor(
+                    tile: $0.tile,
+                    facing: $0.facing,
+                    scenePoint: PixelOfficeSceneLayout.normalizedPosition(for: $0.tile)
+                )
+            }
+        }
+
+        return [
+            .init(tile: PixelOfficeTilePoint(col: 13, row: 15), facing: .right, scenePoint: PixelOfficeSceneLayout.normalizedPosition(for: PixelOfficeTilePoint(col: 13, row: 15))),
+            .init(tile: PixelOfficeTilePoint(col: 17, row: 15), facing: .left, scenePoint: PixelOfficeSceneLayout.normalizedPosition(for: PixelOfficeTilePoint(col: 17, row: 15)))
+        ]
+    }
+
+    private static var alertSlots: [PixelOfficeAnchor] {
+        let tiles = PixelOfficeSourceLayoutStore.shared.alertTiles()
+        if !tiles.isEmpty {
+            return tiles.map {
+                PixelOfficeAnchor(
+                    tile: $0,
+                    facing: .right,
+                    scenePoint: PixelOfficeSceneLayout.normalizedPosition(for: $0)
+                )
+            }
+        }
+
+        return [
+            .init(tile: PixelOfficeTilePoint(col: 12, row: 13), facing: .right, scenePoint: PixelOfficeSceneLayout.normalizedPosition(for: PixelOfficeTilePoint(col: 12, row: 13)))
+        ]
+    }
 
     static func makeAgents(from descriptors: [PixelOfficeSessionDescriptor]) -> [PixelOfficeAgent] {
         let sorted = descriptors.sorted { lhs, rhs in
@@ -693,7 +792,7 @@ enum PixelOfficeSceneBuilder {
                 platform: session.platform,
                 zone: zone,
                 taskState: descriptor.taskState,
-                position: PixelOfficeSceneLayout.normalizedPosition(for: assignedAnchor.tile),
+                position: assignedAnchor.scenePoint,
                 seatTile: assignedAnchor.tile,
                 facing: assignedAnchor.facing,
                 tint: color(
@@ -715,6 +814,355 @@ enum PixelOfficeSceneBuilder {
                 quotaEntries: primaryQuotaEntries(for: session)
             )
         }
+    }
+
+    private struct SceneRouteStop {
+        let point: CGPoint
+        let dwell: Double
+        let seated: Bool
+        let facing: PixelCharacterFacing?
+    }
+
+    private struct ScenePoseState {
+        let point: CGPoint
+        let facing: PixelCharacterFacing
+        let animationState: PixelCharacterAnimationState
+        let isSeated: Bool
+    }
+
+    static func scenePose(
+        for agent: PixelOfficeAgent,
+        timestamp: TimeInterval,
+        in sceneRect: CGRect
+    ) -> PixelOfficeAnimatedPose {
+        let state = scenePoseState(for: agent, timestamp: timestamp)
+        return PixelOfficeAnimatedPose(
+            point: scenePoint(state.point, in: sceneRect),
+            facing: state.facing,
+            animationState: state.animationState,
+            isSeated: state.isSeated
+        )
+    }
+
+    static func currentNormalizedPose(
+        for agent: PixelOfficeAgent,
+        timestamp: TimeInterval
+    ) -> PixelOfficeAnimatedPose {
+        scenePose(
+            for: agent,
+            timestamp: timestamp,
+            in: unitSceneRect
+        )
+    }
+
+    static func transitionPlan(
+        from startPoint: CGPoint,
+        previousAgent: PixelOfficeAgent,
+        to nextAgent: PixelOfficeAgent,
+        startTime: TimeInterval
+    ) -> PixelOfficeTransitionPlan? {
+        let path = compactPath(
+            [
+                startPoint
+            ] + exitWaypoints(for: previousAgent.zone, from: startPoint)
+                + entryWaypoints(for: nextAgent.zone, destination: nextAgent.position)
+                + [nextAgent.position]
+        )
+
+        guard path.count > 1 else {
+            return nil
+        }
+
+        let segmentDurations = zip(path, path.dropFirst()).map { start, end in
+            transitionTravelDuration(from: start, to: end)
+        }
+
+        guard segmentDurations.contains(where: { $0 > 0 }) else {
+            return nil
+        }
+
+        return PixelOfficeTransitionPlan(
+            path: path,
+            segmentDurations: segmentDurations,
+            startTime: startTime
+        )
+    }
+
+    static func transitionPose(
+        for plan: PixelOfficeTransitionPlan,
+        targetAgent: PixelOfficeAgent,
+        timestamp: TimeInterval,
+        in sceneRect: CGRect
+    ) -> PixelOfficeAnimatedPose? {
+        guard timestamp < plan.endTime else {
+            return nil
+        }
+
+        var cursor = max(0, timestamp - plan.startTime)
+        for index in plan.segmentDurations.indices {
+            let duration = max(plan.segmentDurations[index], 0.001)
+            let start = plan.path[index]
+            let end = plan.path[index + 1]
+            if cursor <= duration {
+                let progress = max(0, min(1, cursor / duration))
+                let point = CGPoint(
+                    x: start.x + (end.x - start.x) * progress,
+                    y: start.y + (end.y - start.y) * progress
+                )
+                return PixelOfficeAnimatedPose(
+                    point: scenePoint(point, in: sceneRect),
+                    facing: facing(from: start, to: end, fallback: targetAgent.facing),
+                    animationState: .walking,
+                    isSeated: false
+                )
+            }
+
+            cursor -= duration
+        }
+
+        return nil
+    }
+
+    private static func scenePoseState(
+        for agent: PixelOfficeAgent,
+        timestamp: TimeInterval
+    ) -> ScenePoseState {
+        switch agent.taskState {
+        case .working:
+            return ScenePoseState(
+                point: agent.position,
+                facing: agent.facing,
+                animationState: .typing,
+                isSeated: true
+            )
+        case .responding:
+            return ScenePoseState(
+                point: agent.position,
+                facing: agent.facing,
+                animationState: .reading,
+                isSeated: true
+            )
+        case .idle, .stale:
+            return routePoseState(
+                route: idleRoute(for: agent),
+                timestamp: timestamp,
+                fallbackFacing: agent.facing,
+                stationaryState: .idle
+            )
+        case .needsLogin, .blocked, .error:
+            return ScenePoseState(
+                point: agent.position,
+                facing: agent.facing,
+                animationState: .idle,
+                isSeated: true
+            )
+        case .waiting:
+            return routePoseState(
+                route: waitingRoute(for: agent),
+                timestamp: timestamp,
+                fallbackFacing: .down,
+                stationaryState: .idle
+            )
+        case .quotaLow:
+            return routePoseState(
+                route: alertRoute(for: agent),
+                timestamp: timestamp,
+                fallbackFacing: agent.facing,
+                stationaryState: .idle
+            )
+        }
+    }
+
+    private static func routePoseState(
+        route: [SceneRouteStop],
+        timestamp: TimeInterval,
+        fallbackFacing: PixelCharacterFacing,
+        stationaryState: PixelCharacterAnimationState
+    ) -> ScenePoseState {
+        guard route.count > 1 else {
+            return ScenePoseState(
+                point: route.first?.point ?? CGPoint(x: 0.5, y: 0.5),
+                facing: route.first?.facing ?? fallbackFacing,
+                animationState: stationaryState,
+                isSeated: route.first?.seated ?? false
+            )
+        }
+
+        var cycleDuration = 0.0
+        for index in route.indices {
+            cycleDuration += route[index].dwell
+            let nextIndex = (index + 1) % route.count
+            cycleDuration += normalizedTravelDuration(from: route[index].point, to: route[nextIndex].point)
+        }
+
+        let time = positiveRemainder(timestamp * 0.95 + routeSeed(route) * 1.4, cycleDuration)
+        var cursor = time
+
+        for index in route.indices {
+            let current = route[index]
+            let next = route[(index + 1) % route.count]
+
+            if cursor <= current.dwell {
+                return ScenePoseState(
+                    point: current.point,
+                    facing: current.facing ?? facing(from: current.point, to: next.point, fallback: fallbackFacing),
+                    animationState: stationaryState,
+                    isSeated: current.seated
+                )
+            }
+
+            cursor -= current.dwell
+            let segmentDuration = normalizedTravelDuration(from: current.point, to: next.point)
+            if cursor <= segmentDuration {
+                let progress = max(0, min(1, cursor / max(segmentDuration, 0.001)))
+                let point = CGPoint(
+                    x: current.point.x + (next.point.x - current.point.x) * progress,
+                    y: current.point.y + (next.point.y - current.point.y) * progress
+                )
+                return ScenePoseState(
+                    point: point,
+                    facing: facing(from: current.point, to: next.point, fallback: fallbackFacing),
+                    animationState: .walking,
+                    isSeated: false
+                )
+            }
+
+            cursor -= segmentDuration
+        }
+
+        let last = route.last!
+        return ScenePoseState(
+            point: last.point,
+            facing: last.facing ?? fallbackFacing,
+            animationState: stationaryState,
+            isSeated: last.seated
+        )
+    }
+
+    private static func idleRoute(for agent: PixelOfficeAgent) -> [SceneRouteStop] {
+        if agent.zone == .lounge {
+            return [
+                SceneRouteStop(point: agent.position, dwell: 4.8, seated: true, facing: agent.facing),
+                SceneRouteStop(point: loungeCenter, dwell: 0.7, seated: false, facing: .up),
+                SceneRouteStop(point: loungeBookcase, dwell: 0.9, seated: false, facing: .up),
+                SceneRouteStop(point: agent.position, dwell: 3.4, seated: true, facing: agent.facing)
+            ]
+        }
+
+        let aisle = tileWaypoint(col: 8 + (agent.spriteIndex % 2), row: 14)
+        let topDesk = tileWaypoint(col: 8 + (agent.spriteIndex % 2), row: 11)
+        return [
+            SceneRouteStop(point: agent.position, dwell: 0.8, seated: false, facing: .down),
+            SceneRouteStop(point: aisle, dwell: 0.8, seated: false, facing: .right),
+            SceneRouteStop(point: topDesk, dwell: 0.9, seated: false, facing: .up),
+            SceneRouteStop(point: agent.position, dwell: 0.8, seated: false, facing: .down)
+        ]
+    }
+
+    private static func waitingRoute(for agent: PixelOfficeAgent) -> [SceneRouteStop] {
+        let rightCenter = tileWaypoint(col: 9, row: 14)
+        return [
+            SceneRouteStop(point: agent.position, dwell: 0.5, seated: false, facing: .down),
+            SceneRouteStop(point: deskAisleLower, dwell: 0.5, seated: false, facing: .up),
+            SceneRouteStop(point: deskAisleUpper, dwell: 0.7, seated: false, facing: .up),
+            SceneRouteStop(point: rightCenter, dwell: 0.6, seated: false, facing: .right)
+        ]
+    }
+
+    private static func alertRoute(for agent: PixelOfficeAgent) -> [SceneRouteStop] {
+        return [
+            SceneRouteStop(point: agent.position, dwell: 1.0, seated: false, facing: agent.facing),
+            SceneRouteStop(point: utilityCenter, dwell: 1.0, seated: false, facing: .down),
+            SceneRouteStop(point: utilityLeft, dwell: 0.7, seated: false, facing: .left),
+            SceneRouteStop(point: rightDoorway, dwell: 0.7, seated: false, facing: .right)
+        ]
+    }
+
+    private static func routeSeed(_ route: [SceneRouteStop]) -> Double {
+        route.reduce(0) { partialResult, stop in
+            partialResult + Double(Int(stop.point.x * 1000) * 31 + Int(stop.point.y * 1000) * 17)
+        }
+    }
+
+    private static func normalizedTravelDuration(from start: CGPoint, to end: CGPoint) -> Double {
+        let distance = hypot(end.x - start.x, end.y - start.y)
+        return max(Double(distance / 0.14), 0.2)
+    }
+
+    private static func transitionTravelDuration(from start: CGPoint, to end: CGPoint) -> Double {
+        let distance = hypot(end.x - start.x, end.y - start.y)
+        return max(Double(distance / 0.18), 0.18)
+    }
+
+    private static func facing(
+        from start: CGPoint,
+        to end: CGPoint,
+        fallback: PixelCharacterFacing
+    ) -> PixelCharacterFacing {
+        let horizontal = end.x - start.x
+        let vertical = end.y - start.y
+        if abs(horizontal) > abs(vertical) {
+            return horizontal >= 0 ? .right : .left
+        }
+        if vertical != 0 {
+            return vertical >= 0 ? .down : .up
+        }
+        return fallback
+    }
+
+    private static func scenePoint(_ normalized: CGPoint, in rect: CGRect) -> CGPoint {
+        CGPoint(
+            x: rect.minX + rect.width * normalized.x,
+            y: rect.minY + rect.height * normalized.y
+        )
+    }
+
+    private static func positiveRemainder(_ lhs: Double, _ rhs: Double) -> Double {
+        let value = lhs.truncatingRemainder(dividingBy: rhs)
+        return value >= 0 ? value : value + rhs
+    }
+
+    private static func exitWaypoints(for zone: PixelOfficeZone, from point: CGPoint) -> [CGPoint] {
+        switch zone {
+        case .desk:
+            return [point.y >= 0.60 ? deskAisleLower : deskAisleUpper]
+        case .lounge:
+            return [loungeCenter, rightDoorway]
+        case .alert:
+            return [utilityCenter, rightDoorway]
+        }
+    }
+
+    private static func entryWaypoints(for zone: PixelOfficeZone, destination: CGPoint) -> [CGPoint] {
+        switch zone {
+        case .desk:
+            return [destination.y >= 0.60 ? deskAisleLower : deskAisleUpper]
+        case .lounge:
+            return [rightDoorway, loungeCenter]
+        case .alert:
+            return [rightDoorway, utilityCenter]
+        }
+    }
+
+    private static func compactPath(_ points: [CGPoint]) -> [CGPoint] {
+        var compacted: [CGPoint] = []
+        for point in points {
+            if let last = compacted.last, isApproximatelyEqual(last, point) {
+                continue
+            }
+            compacted.append(point)
+        }
+        return compacted
+    }
+
+    private static func tileWaypoint(col: Int, row: Int) -> CGPoint {
+        PixelOfficeSceneLayout.normalizedPosition(
+            for: PixelOfficeTilePoint(col: col, row: row)
+        )
+    }
+
+    private static func isApproximatelyEqual(_ lhs: CGPoint, _ rhs: CGPoint, tolerance: CGFloat = 0.001) -> Bool {
+        abs(lhs.x - rhs.x) <= tolerance && abs(lhs.y - rhs.y) <= tolerance
     }
 
     static func furniture(in size: CGSize) -> PixelOfficeFurnitureLayers {
@@ -994,7 +1442,12 @@ enum PixelOfficeSceneBuilder {
         fallbackZone: PixelOfficeZone
     ) -> PixelOfficeAnchor {
         guard !anchors.isEmpty else {
-            return PixelOfficeAnchor(tile: PixelOfficeTilePoint(col: 10, row: 11), facing: .down)
+            let fallbackTile = PixelOfficeTilePoint(col: 10, row: 11)
+            return PixelOfficeAnchor(
+                tile: fallbackTile,
+                facing: .down,
+                scenePoint: PixelOfficeSceneLayout.normalizedPosition(for: fallbackTile)
+            )
         }
 
         if index < anchors.count {
@@ -1006,28 +1459,34 @@ enum PixelOfficeSceneBuilder {
 
         switch fallbackZone {
         case .desk:
+            let tile = PixelOfficeTilePoint(
+                col: 4 + fallbackColumn * 4,
+                row: 16 + fallbackRow * 3
+            )
             return PixelOfficeAnchor(
-                tile: PixelOfficeTilePoint(
-                    col: 4 + fallbackColumn * 4,
-                    row: 16 + fallbackRow * 3
-                ),
-                facing: .up
+                tile: tile,
+                facing: .up,
+                scenePoint: PixelOfficeSceneLayout.normalizedPosition(for: tile)
             )
         case .lounge:
+            let tile = PixelOfficeTilePoint(
+                col: 13 + fallbackColumn * 2,
+                row: 15 + fallbackRow * 2
+            )
             return PixelOfficeAnchor(
-                tile: PixelOfficeTilePoint(
-                    col: 13 + fallbackColumn * 2,
-                    row: 15 + fallbackRow * 2
-                ),
-                facing: fallbackColumn == 0 ? .right : .left
+                tile: tile,
+                facing: fallbackColumn == 0 ? .right : .left,
+                scenePoint: PixelOfficeSceneLayout.normalizedPosition(for: tile)
             )
         case .alert:
+            let tile = PixelOfficeTilePoint(
+                col: 12 + fallbackColumn * 2,
+                row: 4 + fallbackRow * 2
+            )
             return PixelOfficeAnchor(
-                tile: PixelOfficeTilePoint(
-                    col: 12 + fallbackColumn * 2,
-                    row: 4 + fallbackRow * 2
-                ),
-                facing: .down
+                tile: tile,
+                facing: .down,
+                scenePoint: PixelOfficeSceneLayout.normalizedPosition(for: tile)
             )
         }
     }
@@ -1063,7 +1522,7 @@ enum PixelOfficeSceneBuilder {
 
     static func alertQueue(from agents: [PixelOfficeAgent], limit: Int = 4) -> [PixelOfficeAgent] {
         prioritizedQueue(
-            from: agents.filter { $0.zone == .alert },
+            from: agents.filter(\.isAlerting),
             limit: limit
         )
     }
@@ -1079,11 +1538,11 @@ enum PixelOfficeSceneBuilder {
 
     private static func zone(for taskState: SessionTaskState) -> PixelOfficeZone {
         switch taskState {
-        case .working, .responding:
+        case .working, .responding, .waiting:
             return .desk
-        case .waiting, .idle:
+        case .idle, .needsLogin, .blocked, .error:
             return .lounge
-        case .needsLogin, .quotaLow, .blocked, .stale, .error:
+        case .quotaLow, .stale:
             return .alert
         }
     }
