@@ -112,7 +112,18 @@ struct PixelOfficeCharacterSprite: View {
     private var currentFrame: Int {
         switch state {
         case .idle:
-            return 0
+            return 1
+        case .walking:
+            switch Int((timestamp / 0.15).rounded(.down)).quotientAndRemainder(dividingBy: 4).remainder {
+            case 0:
+                return 0
+            case 1:
+                return 1
+            case 2:
+                return 2
+            default:
+                return 1
+            }
         case .typing:
             return Int((timestamp * 3.0).rounded(.down)).quotientAndRemainder(dividingBy: 2).remainder == 0 ? 3 : 4
         case .reading:

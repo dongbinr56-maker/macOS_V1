@@ -15,7 +15,7 @@ xcodebuild \
   -derivedDataPath "$DERIVED_DATA_PATH" \
   CODE_SIGNING_ALLOWED=NO \
   CODE_SIGNING_REQUIRED=NO \
-  build
+  build >&2
 
 APP_PATH="$DERIVED_DATA_PATH/Build/Products/$CONFIGURATION/AIWebUsageMonitor.app"
 BUNDLE_IDENTIFIER="$(defaults read "$APP_PATH/Contents/Info" CFBundleIdentifier)"
@@ -25,6 +25,6 @@ codesign \
   --deep \
   --sign - \
   --identifier "$BUNDLE_IDENTIFIER" \
-  "$APP_PATH"
+  "$APP_PATH" >&2
 
 echo "$APP_PATH"

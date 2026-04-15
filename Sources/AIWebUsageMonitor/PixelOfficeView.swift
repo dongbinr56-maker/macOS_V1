@@ -227,40 +227,38 @@ private struct PixelOfficeSceneCard: View {
                 }
             }
 
-            ZStack {
-                TimelineView(.animation(minimumInterval: 1.0 / 8.0, paused: agents.isEmpty)) { context in
-                    PixelOfficeScene(
-                        agents: agents,
-                        selectedAgentID: selectedAgentID,
-                        focusedAgent: focusedAgent,
-                        timestamp: context.date.timeIntervalSinceReferenceDate,
-                        onSelect: onSelect,
-                        onHover: onHover
-                    )
-                }
-
-                if !hasSessions {
-                    PixelOfficeSceneEmptyOverlay(
-                        title: "세션이 아직 없습니다.",
-                        message: "설정에서 Codex, Claude, Cursor 세션을 연결하면 오피스에 바로 배치됩니다.",
-                        buttonTitle: "세션 추가",
-                        action: onOpenSettings
-                    )
-                } else if agents.isEmpty {
-                    PixelOfficeSceneEmptyOverlay(
-                        title: "현재 필터와 일치하는 세션이 없습니다.",
-                        message: "필터를 초기화하거나 다른 플랫폼을 선택해서 다시 확인하세요.",
-                        buttonTitle: "필터 초기화",
-                        action: onResetFilters
-                    )
-                }
+            TimelineView(.animation(minimumInterval: 1.0 / 8.0, paused: false)) { context in
+                PixelOfficeScene(
+                    agents: agents,
+                    selectedAgentID: selectedAgentID,
+                    focusedAgent: focusedAgent,
+                    timestamp: context.date.timeIntervalSinceReferenceDate,
+                    onSelect: onSelect,
+                    onHover: onHover
+                )
             }
-            .frame(height: 348)
+            .frame(height: 392)
             .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 26, style: .continuous)
                     .stroke(Color.white.opacity(0.08), lineWidth: 1)
             )
+
+            if !hasSessions {
+                PixelOfficeSceneEmptyOverlay(
+                    title: "세션이 아직 없습니다.",
+                    message: "설정에서 Codex, Claude, Cursor 세션을 연결하면 오피스 안에 바로 배치됩니다.",
+                    buttonTitle: "세션 추가",
+                    action: onOpenSettings
+                )
+            } else if agents.isEmpty {
+                PixelOfficeSceneEmptyOverlay(
+                    title: "현재 필터와 일치하는 세션이 없습니다.",
+                    message: "필터를 초기화하거나 다른 플랫폼을 선택해서 다시 확인하세요.",
+                    buttonTitle: "필터 초기화",
+                    action: onResetFilters
+                )
+            }
         }
         .padding(14)
         .background(cardBackground)
@@ -525,11 +523,29 @@ private struct PixelOfficeScene: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let size = proxy.size
-            let furniture = PixelOfficeSceneBuilder.furniture(in: size)
+            let metrics = PixelOfficeSceneLayout.metrics(in: proxy.size)
+            let furniture = PixelOfficeSceneLayout.furniture(in: metrics)
+            let renderedAgents = agents
+                .map { agent in
+                    (
+                        agent,
+                        PixelOfficeSceneLayout.animatedPose(
+                            for: agent,
+                            timestamp: timestamp,
+                            metrics: metrics
+                        )
+                    )
+                }
+                .sorted { lhs, rhs in
+                    if lhs.1.point.y != rhs.1.point.y {
+                        return lhs.1.point.y < rhs.1.point.y
+                    }
+
+                    return lhs.0.displayName.localizedStandardCompare(rhs.0.displayName) == .orderedAscending
+                }
 
             ZStack {
-                PixelOfficeBackdrop(size: size)
+                PixelOfficeBackdrop(metrics: metrics)
                 ForEach(furniture.backLayer) { item in
                     PixelOfficeFurnitureView(item: item, timestamp: timestamp)
                 }
@@ -538,20 +554,18 @@ private struct PixelOfficeScene: View {
                     PixelOfficeFurnitureView(item: item, timestamp: timestamp)
                 }
 
-                ForEach(agents) { agent in
+                ForEach(renderedAgents, id: \.0.id) { rendered in
                     PixelOfficeAgentView(
-                        agent: agent,
-                        isSelected: agent.id == selectedAgentID,
-                        isHovered: agent.id == focusedAgent?.id && agent.id != selectedAgentID,
+                        agent: rendered.0,
+                        pose: rendered.1,
+                        isSelected: rendered.0.id == selectedAgentID,
+                        isHovered: rendered.0.id == focusedAgent?.id && rendered.0.id != selectedAgentID,
                         timestamp: timestamp,
                         onHover: onHover
                     ) {
-                        onSelect(agent.id)
+                        onSelect(rendered.0.id)
                     }
-                    .position(
-                        x: size.width * agent.position.x,
-                        y: size.height * agent.position.y
-                    )
+                    .position(rendered.1.point)
                 }
 
                 ForEach(furniture.frontLayer) { item in
@@ -573,141 +587,80 @@ private struct PixelOfficeScene: View {
 }
 
 private struct PixelOfficeBackdrop: View {
-    let size: CGSize
+    let metrics: PixelOfficeSceneMetrics
 
     var body: some View {
-        let contentInset = size.width * 0.04
-        let corridorRect = CGRect(
-            x: contentInset,
-            y: size.height * 0.05,
-            width: size.width - contentInset * 2,
-            height: size.height * 0.18
-        )
-        let leftRoomRect = CGRect(
-            x: contentInset,
-            y: size.height * 0.27,
-            width: size.width * 0.40,
-            height: size.height * 0.60
-        )
-        let rightRoomRect = CGRect(
-            x: size.width * 0.54,
-            y: size.height * 0.27,
-            width: size.width * 0.40,
-            height: size.height * 0.60
-        )
-        let dividerRect = CGRect(
-            x: size.width * 0.48,
-            y: size.height * 0.23,
-            width: size.width * 0.06,
-            height: size.height * 0.64
-        )
-        let doorwayRect = CGRect(
-            x: dividerRect.minX + dividerRect.width * 0.15,
-            y: size.height * 0.73,
-            width: dividerRect.width * 0.70,
-            height: size.height * 0.14
-        )
+        let officeRect = metrics.rect(col: 0, row: 0, width: 11, height: 22)
+        let utilityRect = metrics.rect(col: 11, row: 0, width: 10, height: 7)
+        let loungeRect = metrics.rect(col: 11, row: 7, width: 10, height: 15)
+        let verticalWallTop = metrics.rect(col: 10, row: 0, width: 1, height: 15)
+        let verticalWallBottom = metrics.rect(col: 10, row: 18, width: 1, height: 4)
+        let utilityDivider = metrics.rect(col: 11, row: 6, width: 10, height: 1)
+        let topAccent = CGRect(x: metrics.sceneRect.minX, y: metrics.sceneRect.minY, width: metrics.sceneRect.width, height: 2)
 
         ZStack {
-            Color(red: 0.08, green: 0.11, blue: 0.17)
+            Color(red: 0.05, green: 0.06, blue: 0.11)
 
-            PixelOfficeTiledArea(
-                subpath: "floors/floor_1.png",
-                rect: corridorRect,
-                tileSize: 16
-            )
-            .overlay(
-                Rectangle()
-                    .stroke(Color.black.opacity(0.10), lineWidth: 1)
-            )
+            Rectangle()
+                .fill(Color(red: 0.11, green: 0.09, blue: 0.14))
+                .frame(width: metrics.sceneRect.width + metrics.tileSize * 2, height: metrics.sceneRect.height + metrics.tileSize * 2)
+                .position(x: metrics.sceneRect.midX, y: metrics.sceneRect.midY)
 
             PixelOfficeTiledArea(
                 subpath: "floors/floor_7.png",
-                rect: leftRoomRect,
-                tileSize: 16
+                rect: officeRect,
+                tileSize: metrics.tileSize
             )
-            .overlay(
-                Rectangle()
-                    .stroke(Color.black.opacity(0.08), lineWidth: 1)
+
+            PixelOfficeTiledArea(
+                subpath: "floors/floor_1.png",
+                rect: utilityRect,
+                tileSize: metrics.tileSize
             )
 
             PixelOfficeTiledArea(
                 subpath: "floors/floor_8.png",
-                rect: rightRoomRect,
-                tileSize: 16
-            )
-            .overlay(
-                Rectangle()
-                    .stroke(Color.black.opacity(0.08), lineWidth: 1)
+                rect: loungeRect,
+                tileSize: metrics.tileSize
             )
 
+            Group {
+                Rectangle()
+                    .fill(Color(red: 0.11, green: 0.15, blue: 0.22))
+                    .frame(width: verticalWallTop.width, height: verticalWallTop.height)
+                    .position(x: verticalWallTop.midX, y: verticalWallTop.midY)
+
+                Rectangle()
+                    .fill(Color(red: 0.11, green: 0.15, blue: 0.22))
+                    .frame(width: verticalWallBottom.width, height: verticalWallBottom.height)
+                    .position(x: verticalWallBottom.midX, y: verticalWallBottom.midY)
+
+                Rectangle()
+                    .fill(Color(red: 0.11, green: 0.15, blue: 0.22))
+                    .frame(width: utilityDivider.width, height: utilityDivider.height)
+                    .position(x: utilityDivider.midX, y: utilityDivider.midY)
+            }
+
             Rectangle()
-                .fill(Color(red: 0.07, green: 0.10, blue: 0.16))
-                .frame(width: dividerRect.width, height: dividerRect.height)
-                .position(x: dividerRect.midX, y: dividerRect.midY)
+                .fill(Color(red: 0.55, green: 0.21, blue: 0.25))
+                .frame(width: topAccent.width, height: topAccent.height)
+                .position(x: topAccent.midX, y: topAccent.midY)
 
-            Rectangle()
-                .fill(Color(red: 0.12, green: 0.16, blue: 0.23))
-                .frame(width: doorwayRect.width, height: doorwayRect.height)
-                .position(x: doorwayRect.midX, y: doorwayRect.midY)
-
-            HStack(spacing: 0) {
-                Rectangle()
-                    .fill(Color(red: 0.07, green: 0.10, blue: 0.16))
-                    .frame(width: size.width * 0.46)
-
-                Rectangle()
-                    .fill(Color.clear)
-                    .frame(width: size.width * 0.08)
-
-                Rectangle()
-                    .fill(Color(red: 0.07, green: 0.10, blue: 0.16))
-                    .frame(width: size.width * 0.46)
-            }
-            .frame(height: size.height * 0.05)
-            .frame(maxHeight: .infinity, alignment: .top)
-
-            HStack(spacing: 0) {
-                Rectangle()
-                    .fill(Color(red: 0.07, green: 0.10, blue: 0.16))
-                    .frame(width: size.width * 0.46)
-
-                Rectangle()
-                    .fill(Color.clear)
-                    .frame(width: size.width * 0.08)
-
-                Rectangle()
-                    .fill(Color(red: 0.07, green: 0.10, blue: 0.16))
-                    .frame(width: size.width * 0.46)
-            }
-            .frame(height: size.height * 0.05)
-            .frame(maxHeight: .infinity, alignment: .bottom)
-
-            HStack(spacing: 0) {
-                Rectangle()
-                    .fill(Color(red: 0.07, green: 0.10, blue: 0.16))
-                    .frame(width: size.width * 0.04)
-
-                Spacer()
-
-                Rectangle()
-                    .fill(Color(red: 0.07, green: 0.10, blue: 0.16))
-                    .frame(width: size.width * 0.04)
-            }
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(Color.white.opacity(0.05), lineWidth: 1)
+                .frame(width: metrics.sceneRect.width, height: metrics.sceneRect.height)
+                .position(x: metrics.sceneRect.midX, y: metrics.sceneRect.midY)
 
             Rectangle()
                 .fill(
                     LinearGradient(
-                        colors: [
-                            Color.clear,
-                            Color.black.opacity(0.12)
-                        ],
+                        colors: [Color.clear, Color.black.opacity(0.18)],
                         startPoint: .top,
                         endPoint: .bottom
                     )
                 )
-                .frame(height: 120)
-                .frame(maxHeight: .infinity, alignment: .bottom)
+                .frame(width: metrics.sceneRect.width, height: metrics.sceneRect.height)
+                .position(x: metrics.sceneRect.midX, y: metrics.sceneRect.midY)
         }
     }
 }
@@ -721,24 +674,20 @@ private struct PixelOfficeTiledArea: View {
         let columns = max(Int(ceil(rect.width / tileSize)), 1)
         let rows = max(Int(ceil(rect.height / tileSize)), 1)
 
-        ZStack {
-            Color.black.opacity(0.08)
-
-            VStack(spacing: 0) {
-                ForEach(0..<rows, id: \.self) { _ in
-                    HStack(spacing: 0) {
-                        ForEach(0..<columns, id: \.self) { _ in
-                            PixelOfficeTiledImage(
-                                subpath: subpath,
-                                size: CGSize(width: tileSize, height: tileSize)
-                            )
-                        }
+        VStack(spacing: 0) {
+            ForEach(0..<rows, id: \.self) { _ in
+                HStack(spacing: 0) {
+                    ForEach(0..<columns, id: \.self) { _ in
+                        PixelOfficeTiledImage(
+                            subpath: subpath,
+                            size: CGSize(width: tileSize, height: tileSize)
+                        )
                     }
                 }
             }
         }
         .frame(width: rect.width, height: rect.height)
-        .clipShape(Rectangle())
+        .clipped()
         .position(x: rect.midX, y: rect.midY)
     }
 }
@@ -751,14 +700,15 @@ private struct PixelOfficeFurnitureView: View {
         ZStack(alignment: .center) {
             if item.glow {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(item.glowColor.opacity(0.18))
-                    .frame(width: item.size.width + 20, height: item.size.height + 20)
-                    .blur(radius: 8)
+                    .fill(item.glowColor.opacity(0.22))
+                    .frame(width: item.size.width + 18, height: item.size.height + 18)
+                    .blur(radius: 6)
             }
 
-            PixelOfficeImage(subpath: item.subpath, size: item.size)
+            furnitureBody
                 .opacity(item.opacity)
                 .brightness(item.brightness)
+                .scaleEffect(x: item.mirrored ? -1 : 1, y: 1)
                 .overlay(alignment: .center) {
                     if item.monitorFrames.count > 1 {
                         PixelOfficeImage(
@@ -771,13 +721,254 @@ private struct PixelOfficeFurnitureView: View {
         .position(item.position)
     }
 
+    @ViewBuilder
+    private var furnitureBody: some View {
+        if item.subpath.hasPrefix("custom:") {
+            PixelOfficeCustomFurnitureView(kind: item.subpath, size: item.size)
+        } else {
+            PixelOfficeImage(subpath: item.subpath, size: item.size)
+        }
+    }
+
     private var currentMonitorFrameIndex: Int {
-        Int((timestamp * 2.2).rounded(.down)).quotientAndRemainder(dividingBy: item.monitorFrames.count).remainder
+        guard !item.monitorFrames.isEmpty else {
+            return 0
+        }
+
+        return Int((timestamp * 2.2).rounded(.down)).quotientAndRemainder(dividingBy: item.monitorFrames.count).remainder
+    }
+}
+
+private struct PixelOfficeCustomFurnitureView: View {
+    let kind: String
+    let size: CGSize
+
+    var body: some View {
+        PixelOfficePixelArt(
+            rows: spriteRows,
+            palette: palette,
+            size: size
+        )
+    }
+
+    private var spriteRows: [String] {
+        switch kind {
+        case "custom:vending-machine":
+            return [
+                "................",
+                ".AAAAAAAAAAAAAA.",
+                ".ABBBBBBBBBBBBA.",
+                ".ABCCCCDDCCCCBA.",
+                ".ABCEEEEFEEEECBA",
+                ".ABCEEEEFEEEECBA",
+                ".ABCGGGGGGGGECBA",
+                ".ABCGHHIHHHHECBA",
+                ".ABCGHHIHHHHECBA",
+                ".ABCGJJJJJJJECBA",
+                ".ABCKKKKKKKKECBA",
+                ".ABCKLLLMLKKECBA",
+                ".ABCKLLLMLKKECBA",
+                ".ABCKNNNNNNKECBA",
+                ".ABCOOOPOOOKECBA",
+                ".ABCOOOPOOOKECBA",
+                ".ABCQQQQQQQKECBA",
+                ".ABCRRRRRRRKECBA",
+                ".ABCSSSSSSSKECBA",
+                ".ABCTTTTTTTKECBA",
+                ".ABCUUUUUUUKECBA",
+                ".ABCVVVVVVVKECBA",
+                ".ABWWWWWWWWKECBA",
+                ".ABXXXXXXXXXECBA",
+                ".ABYYYYYYYYYECBA",
+                ".ABZZZZZZZZZECBA",
+                ".AB000000000ECBA",
+                ".AB111111111ECBA",
+                ".AB222223333ECBA",
+                ".AB444445555ECBA",
+                ".AB666666666EBA.",
+                ".AAAAAAAAAAAAAA."
+            ]
+        case "custom:water-cooler":
+            return [
+                "........",
+                "..AAAA..",
+                ".ABBBBA.",
+                ".ABCCBA.",
+                "..ADDA..",
+                "..ADDA..",
+                "..AEEA..",
+                "..AEEA..",
+                "..AEEA..",
+                "..AEEA..",
+                "..AEEA..",
+                "..AEEA..",
+                "..AEEA..",
+                "..AEEA..",
+                "..AEEA..",
+                "..AEEA.."
+            ]
+        case "custom:counter":
+            return [
+                "................",
+                "................",
+                "AAAAAAAAAAAAAAAA",
+                "ABBBBBBBBBBBBBBA",
+                "ACCCCCCCCCCCCCCA",
+                "ADDDDEEEEEDDDDDA",
+                "ADDDDFFFFFDDDDDA",
+                "ADDDDEEEEEDDDDDA",
+                "ADDDDDDDDDDDDDDA",
+                "AGGGGHHIIHHGGGGA",
+                "AGGGGHHIIHHGGGGA",
+                "AGGGGHHIIHHGGGGA",
+                "AGGGGHHIIHHGGGGA",
+                "AGGGGHHIIHHGGGGA",
+                "AJJJJHHIIHHJJJJA",
+                "AKKKKKKKKKKKKKKA"
+            ]
+        case "custom:fridge":
+            return [
+                "..AAAA..",
+                ".ABBBBA.",
+                ".ACCCCA.",
+                ".ACDDCA.",
+                ".ACCCCA.",
+                ".ACCCCA.",
+                ".ACEECA.",
+                ".ACCCCA.",
+                ".ACCCCA.",
+                ".ACCCCA.",
+                ".ACDDCA.",
+                ".ACCCCA.",
+                ".ACCCCA.",
+                ".AFFFFA.",
+                ".AGGGGA.",
+                ".AHHHHA."
+            ]
+        default:
+            return ["....", ".AA.", ".AA.", "...."]
+        }
+    }
+
+    private var palette: [Character: Color] {
+        switch kind {
+        case "custom:vending-machine":
+            return [
+                ".": .clear,
+                "A": Color(red: 0.16, green: 0.20, blue: 0.31),
+                "B": Color(red: 0.74, green: 0.84, blue: 0.93),
+                "C": Color(red: 0.29, green: 0.36, blue: 0.53),
+                "D": Color(red: 0.63, green: 0.10, blue: 0.15),
+                "E": Color(red: 0.92, green: 0.95, blue: 0.98),
+                "F": Color(red: 0.18, green: 0.69, blue: 0.57),
+                "G": Color(red: 0.51, green: 0.58, blue: 0.70),
+                "H": Color(red: 0.15, green: 0.21, blue: 0.29),
+                "I": Color(red: 0.80, green: 0.88, blue: 0.95),
+                "J": Color(red: 0.79, green: 0.69, blue: 0.34),
+                "K": Color(red: 0.28, green: 0.33, blue: 0.46),
+                "L": Color(red: 0.98, green: 0.61, blue: 0.24),
+                "M": Color(red: 0.92, green: 0.28, blue: 0.30),
+                "N": Color(red: 0.25, green: 0.58, blue: 0.92),
+                "O": Color(red: 0.22, green: 0.25, blue: 0.34),
+                "P": Color(red: 0.97, green: 0.93, blue: 0.67),
+                "Q": Color(red: 0.75, green: 0.76, blue: 0.79),
+                "R": Color(red: 0.61, green: 0.66, blue: 0.73),
+                "S": Color(red: 0.33, green: 0.37, blue: 0.45),
+                "T": Color(red: 0.49, green: 0.52, blue: 0.58),
+                "U": Color(red: 0.22, green: 0.25, blue: 0.31),
+                "V": Color(red: 0.87, green: 0.89, blue: 0.92),
+                "W": Color(red: 0.98, green: 0.74, blue: 0.28),
+                "X": Color(red: 0.85, green: 0.18, blue: 0.21),
+                "Y": Color(red: 0.18, green: 0.77, blue: 0.64),
+                "Z": Color(red: 0.24, green: 0.68, blue: 0.89),
+                "0": Color(red: 0.29, green: 0.31, blue: 0.39),
+                "1": Color(red: 0.40, green: 0.42, blue: 0.48),
+                "2": Color(red: 0.25, green: 0.27, blue: 0.32),
+                "3": Color(red: 0.13, green: 0.14, blue: 0.18),
+                "4": Color(red: 0.57, green: 0.63, blue: 0.73),
+                "5": Color(red: 0.31, green: 0.35, blue: 0.43),
+                "6": Color(red: 0.12, green: 0.14, blue: 0.20)
+            ]
+        case "custom:water-cooler":
+            return [
+                ".": .clear,
+                "A": Color(red: 0.23, green: 0.27, blue: 0.34),
+                "B": Color(red: 0.86, green: 0.94, blue: 0.99),
+                "C": Color(red: 0.62, green: 0.77, blue: 0.95),
+                "D": Color(red: 0.89, green: 0.91, blue: 0.96),
+                "E": Color(red: 0.74, green: 0.78, blue: 0.84)
+            ]
+        case "custom:counter":
+            return [
+                ".": .clear,
+                "A": Color(red: 0.20, green: 0.19, blue: 0.24),
+                "B": Color(red: 0.93, green: 0.92, blue: 0.88),
+                "C": Color(red: 0.87, green: 0.83, blue: 0.76),
+                "D": Color(red: 0.72, green: 0.54, blue: 0.31),
+                "E": Color(red: 0.66, green: 0.47, blue: 0.25),
+                "F": Color(red: 0.57, green: 0.38, blue: 0.18),
+                "G": Color(red: 0.70, green: 0.72, blue: 0.76),
+                "H": Color(red: 0.40, green: 0.43, blue: 0.50),
+                "I": Color(red: 0.24, green: 0.26, blue: 0.31),
+                "J": Color(red: 0.59, green: 0.61, blue: 0.65),
+                "K": Color(red: 0.27, green: 0.29, blue: 0.35)
+            ]
+        case "custom:fridge":
+            return [
+                ".": .clear,
+                "A": Color(red: 0.18, green: 0.20, blue: 0.25),
+                "B": Color(red: 0.91, green: 0.93, blue: 0.96),
+                "C": Color(red: 0.82, green: 0.85, blue: 0.89),
+                "D": Color(red: 0.62, green: 0.66, blue: 0.72),
+                "E": Color(red: 0.73, green: 0.76, blue: 0.81),
+                "F": Color(red: 0.69, green: 0.72, blue: 0.76),
+                "G": Color(red: 0.57, green: 0.61, blue: 0.67),
+                "H": Color(red: 0.36, green: 0.39, blue: 0.46)
+            ]
+        default:
+            return [".": .clear, "A": Color.white]
+        }
+    }
+}
+
+private struct PixelOfficePixelArt: View {
+    let rows: [String]
+    let palette: [Character: Color]
+    let size: CGSize
+
+    var body: some View {
+        GeometryReader { proxy in
+            let rowCount = max(rows.count, 1)
+            let columnCount = max(rows.map(\.count).max() ?? 1, 1)
+            let pixelWidth = proxy.size.width / CGFloat(columnCount)
+            let pixelHeight = proxy.size.height / CGFloat(rowCount)
+
+            Canvas { context, _ in
+                for (rowIndex, row) in rows.enumerated() {
+                    for (columnIndex, character) in row.enumerated() {
+                        guard character != ".", let color = palette[character] else {
+                            continue
+                        }
+
+                        let rect = CGRect(
+                            x: CGFloat(columnIndex) * pixelWidth,
+                            y: CGFloat(rowIndex) * pixelHeight,
+                            width: ceil(pixelWidth),
+                            height: ceil(pixelHeight)
+                        )
+                        context.fill(Path(rect), with: .color(color))
+                    }
+                }
+            }
+            .drawingGroup(opaque: false)
+        }
+        .frame(width: size.width, height: size.height)
     }
 }
 
 private struct PixelOfficeAgentView: View {
     let agent: PixelOfficeAgent
+    let pose: PixelOfficeAnimatedPose
     let isSelected: Bool
     let isHovered: Bool
     let timestamp: TimeInterval
@@ -787,16 +978,16 @@ private struct PixelOfficeAgentView: View {
     var body: some View {
         Button(action: onTap) {
             ZStack {
-                if isSelected {
+                if isSelected || pose.isSeated {
                     Ellipse()
-                        .fill(agent.tint.opacity(0.22))
-                        .frame(width: 34, height: 14)
+                        .fill(agent.tint.opacity(isSelected ? 0.26 : 0.12))
+                        .frame(width: pose.isSeated ? 30 : 26, height: 10)
                         .offset(y: 18)
                 }
 
                 if isSelected || isHovered {
                     PixelOfficeAgentTag(agent: agent, isSelected: isSelected)
-                        .offset(y: -34)
+                        .offset(y: -36)
                 }
 
                 if let bubbleText = bubbleText {
@@ -804,18 +995,16 @@ private struct PixelOfficeAgentView: View {
                         .offset(x: bubbleXOffset, y: -52)
                 }
 
-                VStack(spacing: 0) {
-                    PixelOfficeCharacterSprite(
-                        sheetIndex: agent.spriteIndex,
-                        facing: agent.facing,
-                        state: spriteState,
-                        timestamp: timestamp,
-                        tint: agent.tint,
-                        highlight: isSelected
-                    )
-                    .frame(width: 44, height: 72)
-                }
-                .offset(y: verticalBob)
+                PixelOfficeCharacterSprite(
+                    sheetIndex: agent.spriteIndex,
+                    facing: pose.facing,
+                    state: pose.animationState,
+                    timestamp: timestamp,
+                    tint: agent.tint,
+                    highlight: isSelected
+                )
+                .frame(width: 44, height: 72)
+                .offset(y: pose.isSeated ? 6 : verticalBob)
             }
             .frame(width: 88, height: 108)
             .contentShape(Rectangle())
@@ -825,19 +1014,6 @@ private struct PixelOfficeAgentView: View {
         .help("\(agent.displayName) • \(agent.stateLabel)")
         .onHover { hovering in
             onHover(hovering ? agent.id : nil)
-        }
-    }
-
-    private var spriteState: PixelCharacterAnimationState {
-        switch agent.taskState {
-        case .working:
-            return .typing
-        case .responding:
-            return .reading
-        case .waiting, .idle, .stale:
-            return .idle
-        case .needsLogin, .quotaLow, .blocked, .error:
-            return .idle
         }
     }
 
@@ -878,7 +1054,7 @@ private struct PixelOfficeAgentView: View {
     }
 
     private var bubbleXOffset: CGFloat {
-        switch agent.facing {
+        switch pose.facing {
         case .left:
             return -18
         case .right:
@@ -889,18 +1065,17 @@ private struct PixelOfficeAgentView: View {
     }
 
     private var verticalBob: CGFloat {
-        guard agent.taskState != .blocked && agent.taskState != .needsLogin && agent.taskState != .error else {
+        guard !pose.isSeated else {
             return 0
         }
 
-        let amplitude: Double
-        switch agent.zone {
-        case .desk:
-            amplitude = 0.7
-        case .lounge:
-            amplitude = 1.5
-        case .alert:
-            amplitude = 1.0
+        let amplitude: Double = switch pose.animationState {
+        case .walking:
+            0
+        case .typing, .reading:
+            0.4
+        case .idle:
+            0.9
         }
 
         return CGFloat(sin(timestamp * 3.2 + agent.animationOffset) * amplitude)
