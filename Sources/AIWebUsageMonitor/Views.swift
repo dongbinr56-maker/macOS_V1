@@ -688,10 +688,6 @@ struct SessionCardView: View {
         }
     }
 
-    private var primaryButtonTitle: String {
-        viewModel.primaryActionTitle(for: account)
-    }
-
     private func primaryAction() {
         if account.refreshState == .requiresLogin || account.refreshState == .failed {
             viewModel.reopenLoginWindow(for: account.id)

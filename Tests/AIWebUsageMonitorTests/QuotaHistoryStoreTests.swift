@@ -54,4 +54,39 @@ final class QuotaHistoryStoreTests: XCTestCase {
         XCTAssertEqual(history.first?.progress ?? -1, 0.12, accuracy: 0.0001)
         XCTAssertEqual(history.last?.progress ?? -1, 0.19, accuracy: 0.0001)
     }
+
+    func testHistoryPrunesOldSamplesByRetentionWindow() {
+        let suiteName = "QuotaHistoryStoreTests.\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            XCTFail("테스트 UserDefaults를 생성하지 못했습니다.")
+            return
+        }
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        let store = QuotaHistoryStore(
+            defaults: defaults,
+            storageKey: "quota-history-test",
+            maxSamplesPerEntry: 48,
+            retentionWindow: 2 * 24 * 60 * 60
+        )
+        let accountID = UUID()
+        let now = Date()
+
+        store.record(
+            entries: [UsageQuotaEntry(label: "주간 사용 한도", valueText: "70% 남음", progress: 0.7)],
+            for: accountID,
+            at: now.addingTimeInterval(-3 * 24 * 60 * 60)
+        )
+        store.record(
+            entries: [UsageQuotaEntry(label: "주간 사용 한도", valueText: "66% 남음", progress: 0.66)],
+            for: accountID,
+            at: now
+        )
+
+        let history = store.history(for: accountID, quotaLabel: "주간 사용 한도")
+        XCTAssertEqual(history.count, 1)
+        XCTAssertEqual(history.first?.progress ?? -1, 0.66, accuracy: 0.0001)
+    }
 }

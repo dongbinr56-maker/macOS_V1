@@ -16,22 +16,30 @@ final class QuotaHistoryStore {
     private let defaults: UserDefaults
     private let storageKey: String
     private let maxSamplesPerEntry: Int
+    private let retentionWindow: TimeInterval
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
 
     init(
         defaults: UserDefaults = .standard,
         storageKey: String = "quotaHistory.v1",
-        maxSamplesPerEntry: Int = 48
+        maxSamplesPerEntry: Int = 48,
+        retentionWindow: TimeInterval = 14 * 24 * 60 * 60
     ) {
         self.defaults = defaults
         self.storageKey = storageKey
         self.maxSamplesPerEntry = max(8, maxSamplesPerEntry)
+        self.retentionWindow = max(24 * 60 * 60, retentionWindow)
     }
 
     func history(for accountID: UUID, quotaLabel: String) -> [QuotaHistoryPoint] {
         let key = EntryKey(accountID: accountID, quotaLabel: normalizedLabel(quotaLabel))
-        return load()[key] ?? []
+        let now = Date()
+        var storage = load()
+        let cleaned = prune(storage[key] ?? [], now: now)
+        storage[key] = cleaned
+        persist(storage)
+        return cleaned
     }
 
     func record(entries: [UsageQuotaEntry], for accountID: UUID, at timestamp: Date = Date()) {
@@ -46,7 +54,7 @@ final class QuotaHistoryStore {
             }
 
             let key = EntryKey(accountID: accountID, quotaLabel: normalizedLabel(entry.label))
-            var history = storage[key] ?? []
+            var history = prune(storage[key] ?? [], now: timestamp)
 
             if let last = history.last,
                abs(last.progress - progress) < 0.0001,
@@ -96,5 +104,9 @@ final class QuotaHistoryStore {
             return
         }
         defaults.set(encoded, forKey: storageKey)
+    }
+
+    private func prune(_ points: [QuotaHistoryPoint], now: Date) -> [QuotaHistoryPoint] {
+        points.filter { now.timeIntervalSince($0.timestamp) <= retentionWindow }
     }
 }
