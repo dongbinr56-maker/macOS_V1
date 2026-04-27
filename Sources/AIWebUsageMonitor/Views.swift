@@ -91,7 +91,8 @@ struct MenuBarPopoverView: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        let actionItems = viewModel.immediateActionItems()
+        return VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .center, spacing: 10) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("AI Web Ops Monitor")
@@ -137,6 +138,22 @@ struct MenuBarPopoverView: View {
 
             searchBar
             HeaderStatusPill(summary: viewModel.overallStatusSummary)
+            if !actionItems.isEmpty {
+                ImmediateActionSection(
+                    items: actionItems,
+                    onAction: { item in
+                        if let session = viewModel.sessions.first(where: { $0.id == item.accountID }) {
+                            if item.action == .login {
+                                viewModel.reopenLoginWindow(for: session.id)
+                            } else if item.action == .refresh {
+                                Task { await viewModel.refresh(accountID: session.id) }
+                            } else {
+                                NSWorkspace.shared.open(session.snapshot?.sourceURL ?? session.platform.dashboardURL)
+                            }
+                        }
+                    }
+                )
+            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
@@ -294,6 +311,47 @@ struct HeaderStatusPill: View {
 
     private var borderColor: Color {
         tintColor.opacity(0.18)
+    }
+}
+
+private struct ImmediateActionSection: View {
+    let items: [ImmediateActionItem]
+    let onAction: (ImmediateActionItem) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("즉시 조치")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Color(red: 0.98, green: 0.72, blue: 0.30))
+
+            ForEach(items) { item in
+                HStack(spacing: 8) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(item.displayName)
+                            .font(.caption.weight(.semibold))
+                        Text(item.reason)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    Spacer()
+                    Button(item.actionTitle) {
+                        onAction(item)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.mini)
+                }
+            }
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color(red: 0.22, green: 0.17, blue: 0.10).opacity(0.5))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(Color(red: 0.98, green: 0.72, blue: 0.30).opacity(0.24), lineWidth: 1)
+                )
+        )
     }
 }
 
@@ -498,7 +556,7 @@ struct SessionCardView: View {
 
             HStack(spacing: 8) {
                 SessionPrimaryActionMenu(
-                    primaryTitle: primaryButtonTitle,
+                    primaryTitle: viewModel.primaryActionTitle(for: account),
                     onPrimaryAction: primaryAction,
                     onRefresh: {
                         Task {
@@ -515,6 +573,12 @@ struct SessionCardView: View {
                 )
             }
 
+            if let reason = viewModel.sessionRiskReason(for: account) {
+                Text(reason)
+                    .font(.caption)
+                    .foregroundStyle(Color(red: 0.95, green: 0.68, blue: 0.24))
+            }
+
             if showsTaskContext {
                 SessionTaskContextCard(
                     context: taskContext,
@@ -523,7 +587,12 @@ struct SessionCardView: View {
             }
 
             if let snapshot = account.snapshot, !snapshot.quota.entries.isEmpty {
-                QuotaGridView(entries: snapshot.quota.entries)
+                QuotaGridView(
+                    entries: snapshot.quota.entries,
+                    historyProvider: { label in
+                        viewModel.quotaHistory(for: account, quotaLabel: label)
+                    }
+                )
             } else if let snapshot = account.snapshot, !snapshot.headline.isEmpty {
                 SessionIssueCardView(
                     title: "사용량 수집 결과",
@@ -620,10 +689,7 @@ struct SessionCardView: View {
     }
 
     private var primaryButtonTitle: String {
-        if account.refreshState == .requiresLogin || account.refreshState == .failed {
-            return "로그인"
-        }
-        return "열기"
+        viewModel.primaryActionTitle(for: account)
     }
 
     private func primaryAction() {
@@ -852,6 +918,7 @@ struct SessionIssueCardView: View {
 
 struct QuotaGridView: View {
     let entries: [UsageQuotaEntry]
+    let historyProvider: (String) -> [QuotaHistoryPoint]
 
     private let columns = [
         GridItem(.flexible(), spacing: 10),
@@ -861,7 +928,10 @@ struct QuotaGridView: View {
     var body: some View {
         LazyVGrid(columns: columns, alignment: .leading, spacing: 10) {
             ForEach(entries) { entry in
-                QuotaMetricCardView(entry: entry)
+                QuotaMetricCardView(
+                    entry: entry,
+                    history: historyProvider(entry.label)
+                )
             }
         }
     }
@@ -869,6 +939,7 @@ struct QuotaGridView: View {
 
 struct QuotaMetricCardView: View {
     let entry: UsageQuotaEntry
+    let history: [QuotaHistoryPoint]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -884,6 +955,9 @@ struct QuotaMetricCardView: View {
                 ProgressView(value: min(max(progress, 0), 1))
                     .tint(progressTint(progress))
             }
+
+            QuotaTrendSparkline(points: history, tint: trendTint)
+                .frame(height: 20)
 
             if let resetText = entry.resetText, !resetText.isEmpty {
                 Text(resetText)
@@ -914,6 +988,54 @@ struct QuotaMetricCardView: View {
         }
 
         return Color(red: 0.16, green: 0.82, blue: 0.40)
+    }
+
+    private var trendTint: Color {
+        if let latest = history.last?.progress {
+            return progressTint(latest)
+        }
+        if let current = entry.progress ?? extractQuotaPercent(from: entry.valueText) {
+            return progressTint(current)
+        }
+        return .secondary
+    }
+}
+
+private struct QuotaTrendSparkline: View {
+    let points: [QuotaHistoryPoint]
+    let tint: Color
+
+    var body: some View {
+        Canvas { context, size in
+            guard points.count > 1 else {
+                return
+            }
+
+            let sortedPoints = points.sorted(by: { $0.timestamp < $1.timestamp })
+            let maxIndex = Double(max(sortedPoints.count - 1, 1))
+            var path = Path()
+
+            for (index, point) in sortedPoints.enumerated() {
+                let x = size.width * CGFloat(Double(index) / maxIndex)
+                let y = size.height * CGFloat(1 - min(max(point.progress, 0), 1))
+                if index == 0 {
+                    path.move(to: CGPoint(x: x, y: y))
+                } else {
+                    path.addLine(to: CGPoint(x: x, y: y))
+                }
+            }
+
+            context.stroke(
+                path,
+                with: .color(tint.opacity(0.85)),
+                style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round)
+            )
+        }
+        .overlay(alignment: .bottomLeading) {
+            Rectangle()
+                .fill(Color.white.opacity(0.05))
+                .frame(height: 1)
+        }
     }
 }
 

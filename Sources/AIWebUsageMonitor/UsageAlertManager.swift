@@ -23,6 +23,7 @@ final class UsageAlertManager {
     private let notificationCenter: UNUserNotificationCenter?
     private let accountStore: AccountStore
     private var persistedAlertStates: [String: String]
+    private var lastSentAt: [String: Date] = [:]
 
     init(
         notificationCenter: UNUserNotificationCenter? = nil,
@@ -192,6 +193,14 @@ final class UsageAlertManager {
             return
         }
 
+        let cooldown: TimeInterval = 90
+        let now = Date()
+        let withinCooldown = lastSentAt[key].map { now.timeIntervalSince($0) < cooldown } ?? false
+
+        guard !withinCooldown else {
+            return
+        }
+
         persistedAlertStates[key] = nextLevel.rawValue
         accountStore.saveAlertState(key: key, level: nextLevel.rawValue)
 
@@ -212,6 +221,7 @@ final class UsageAlertManager {
         notificationCenter.add(request) { _ in
             // 알림 실패는 앱 동작을 막지 않는다.
         }
+        lastSentAt[key] = now
     }
 
     private func clearAlert(key: String) {

@@ -300,6 +300,22 @@ struct PlatformHealthSummary {
     var accessibilityLabel: String
 }
 
+struct ImmediateActionItem: Identifiable, Equatable {
+    enum Action: String, Equatable {
+        case login
+        case refresh
+        case open
+    }
+
+    let accountID: UUID
+    let displayName: String
+    let reason: String
+    let actionTitle: String
+    let action: Action
+
+    var id: UUID { accountID }
+}
+
 struct UsageQuotaEntry: Codable, Equatable, Identifiable {
     var id: String { label }
     var label: String

@@ -17,10 +17,12 @@ final class UsageMonitorViewModel: ObservableObject {
     private let staleThreshold: TimeInterval
     private let refreshConcurrencyLimit: Int
     private let localLogMonitor: LocalLogMonitor
+    private let quotaHistoryStore: QuotaHistoryStore
     private var timer: Timer?
     private var refreshInFlight = Set<UUID>()
     private var localLogSnapshots: [AIPlatform: LocalLogSnapshot] = [:]
     private var lastLocalLogRefreshAt: Date?
+    private var lastStableTaskStates: [UUID: (state: SessionTaskState, updatedAt: Date)] = [:]
 
     private struct SessionMetrics {
         var total = 0
@@ -160,7 +162,8 @@ final class UsageMonitorViewModel: ObservableObject {
             idleThreshold: 10 * 60,
             staleThreshold: 15 * 60,
             refreshConcurrencyLimit: 2,
-            localLogMonitor: LocalLogMonitor()
+            localLogMonitor: LocalLogMonitor(),
+            quotaHistoryStore: QuotaHistoryStore()
         )
     }
 
@@ -174,7 +177,8 @@ final class UsageMonitorViewModel: ObservableObject {
         idleThreshold: TimeInterval,
         staleThreshold: TimeInterval,
         refreshConcurrencyLimit: Int,
-        localLogMonitor: LocalLogMonitor = LocalLogMonitor()
+        localLogMonitor: LocalLogMonitor = LocalLogMonitor(),
+        quotaHistoryStore: QuotaHistoryStore = QuotaHistoryStore()
     ) {
         self.sessionManager = sessionManager
         self.accountStore = accountStore
@@ -186,6 +190,7 @@ final class UsageMonitorViewModel: ObservableObject {
         self.staleThreshold = staleThreshold
         self.refreshConcurrencyLimit = max(1, refreshConcurrencyLimit)
         self.localLogMonitor = localLogMonitor
+        self.quotaHistoryStore = quotaHistoryStore
         self.sessions = accountStore.loadAccounts()
 
         for account in sessions {
@@ -296,6 +301,8 @@ final class UsageMonitorViewModel: ObservableObject {
         }
 
         sessions.removeAll { $0.id == accountID }
+        lastStableTaskStates.removeValue(forKey: accountID)
+        quotaHistoryStore.removeHistory(for: accountID)
         let shouldRemoveDataStore = !sessions.contains { $0.dataStoreID == account.dataStoreID }
         persistAccounts()
 
@@ -489,12 +496,13 @@ final class UsageMonitorViewModel: ObservableObject {
         let availability = availability(for: session)
         let activity = activityState(for: session)
         let context = taskContext(for: session)
-        return taskState(
+        let proposed = taskState(
             for: session,
             availability: availability,
             activity: activity,
             context: context
         )
+        return stabilizedTaskState(for: session.id, proposed: proposed)
     }
 
     func presentationState(for session: WebAccountSession) -> PresentationState {
@@ -511,6 +519,78 @@ final class UsageMonitorViewModel: ObservableObject {
         case .needsLogin, .blocked, .error:
             return .blocked
         }
+    }
+
+    func quotaHistory(for session: WebAccountSession, quotaLabel: String) -> [QuotaHistoryPoint] {
+        quotaHistoryStore.history(for: session.id, quotaLabel: quotaLabel)
+    }
+
+    func immediateActionItems(limit: Int = 3) -> [ImmediateActionItem] {
+        sessions
+            .compactMap { session -> (priority: Int, item: ImmediateActionItem)? in
+                guard let reason = sessionRiskReason(for: session) else {
+                    return nil
+                }
+                return (
+                    priority: riskPriority(for: session),
+                    item: ImmediateActionItem(
+                        accountID: session.id,
+                        displayName: session.displayName,
+                        reason: reason,
+                        actionTitle: primaryActionTitle(for: session),
+                        action: primaryAction(for: session)
+                    )
+                )
+            }
+            .sorted { lhs, rhs in
+                if lhs.priority != rhs.priority {
+                    return lhs.priority < rhs.priority
+                }
+                return lhs.item.displayName.localizedStandardCompare(rhs.item.displayName) == .orderedAscending
+            }
+            .prefix(max(1, limit))
+            .map(\.item)
+    }
+
+    func sessionRiskReason(for session: WebAccountSession) -> String? {
+        if session.refreshState == .requiresLogin {
+            return "로그인이 필요합니다."
+        }
+        if session.refreshState == .failed {
+            return "수집 실패 상태입니다."
+        }
+        switch availability(for: session) {
+        case .blocked:
+            return "사용 한도가 소진되었습니다."
+        case .low:
+            return "사용 한도가 임계치에 근접했습니다."
+        case .unknown, .available:
+            break
+        }
+        if activityState(for: session) == .stale {
+            return "세션 갱신이 지연되고 있습니다."
+        }
+        return nil
+    }
+
+    func primaryActionTitle(for session: WebAccountSession) -> String {
+        if session.refreshState == .requiresLogin || session.refreshState == .failed {
+            return "로그인"
+        }
+        if let reason = sessionRiskReason(for: session), !reason.isEmpty {
+            return "새로고침"
+        }
+        return "열기"
+    }
+
+    func primaryAction(for session: WebAccountSession) -> ImmediateActionItem.Action {
+        if session.refreshState == .requiresLogin || session.refreshState == .failed {
+            return .login
+        }
+        if let reason = sessionRiskReason(for: session), !reason.isEmpty {
+            return .refresh
+        }
+        return .open
     }
 
     private func startAutoRefresh() {
@@ -558,6 +638,7 @@ final class UsageMonitorViewModel: ObservableObject {
                     $0.snapshot = snapshot
                     $0.lastErrorDescription = nil
                 }
+                quotaHistoryStore.record(entries: snapshot.quota.entries, for: accountID, at: snapshot.updatedAt)
             } else {
                 updateAccount(accountID) {
                     $0.profileName = payload.profileName
@@ -636,6 +717,50 @@ final class UsageMonitorViewModel: ObservableObject {
         ].compactMap { $0 }
 
         return segments.joined(separator: " · ")
+    }
+
+    private func riskPriority(for session: WebAccountSession) -> Int {
+        if session.refreshState == .requiresLogin {
+            return 0
+        }
+        if session.refreshState == .failed {
+            return 1
+        }
+        if availability(for: session) == .blocked {
+            return 2
+        }
+        if availability(for: session) == .low {
+            return 3
+        }
+        if activityState(for: session) == .stale {
+            return 4
+        }
+        return 99
+    }
+
+    private func stabilizedTaskState(for accountID: UUID, proposed: SessionTaskState, now: Date = Date()) -> SessionTaskState {
+        let stabilizationWindow: TimeInterval = 10
+        guard let previous = lastStableTaskStates[accountID] else {
+            lastStableTaskStates[accountID] = (proposed, now)
+            return proposed
+        }
+
+        if previous.state == proposed {
+            return proposed
+        }
+
+        let criticalStates: Set<SessionTaskState> = [.needsLogin, .blocked, .quotaLow, .error, .stale]
+        if criticalStates.contains(previous.state) || criticalStates.contains(proposed) {
+            lastStableTaskStates[accountID] = (proposed, now)
+            return proposed
+        }
+
+        if now.timeIntervalSince(previous.updatedAt) < stabilizationWindow {
+            return previous.state
+        }
+
+        lastStableTaskStates[accountID] = (proposed, now)
+        return proposed
     }
 }
 

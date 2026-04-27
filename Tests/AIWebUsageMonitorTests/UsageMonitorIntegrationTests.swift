@@ -527,6 +527,78 @@ final class UsageMonitorIntegrationTests: XCTestCase {
         XCTAssertEqual(updated.lastErrorDescription, "로그인 상태를 확인하지 못했습니다. 로그인 창을 다시 열어 주세요.")
     }
 
+    func testImmediateActionItemsPrioritizeLoginFirst() throws {
+        let suiteName = "AIWebUsageMonitorTests.\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            XCTFail("테스트 UserDefaults를 생성하지 못했습니다.")
+            return
+        }
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        let loginSession = WebAccountSession(
+            platform: .codex,
+            displayName: "Login Required",
+            refreshState: .requiresLogin
+        )
+        let normalSession = WebAccountSession(
+            platform: .claude,
+            displayName: "Normal",
+            refreshState: .ready,
+            snapshot: UsageSnapshot(
+                headline: "사용 가능",
+                sourceURL: URL(string: "https://claude.ai/settings/usage"),
+                debugExcerpt: "ok",
+                quota: QuotaSnapshot(entries: [UsageQuotaEntry(label: "Weekly usage limit", valueText: "90% 남음", progress: 0.9)]),
+                activity: ActivitySnapshot(),
+                taskSignals: PlatformTaskSignals(confidence: 0.1),
+                updatedAt: Date()
+            )
+        )
+
+        let store = AccountStore(defaults: defaults, inMemoryOnly: true)
+        store.saveAccounts([normalSession, loginSession])
+        let viewModel = makeViewModel(store: store)
+
+        let items = viewModel.immediateActionItems(limit: 2)
+        XCTAssertEqual(items.first?.displayName, "Login Required")
+        XCTAssertEqual(items.first?.actionTitle, "로그인")
+    }
+
+    func testSessionRiskReasonReturnsLowQuotaMessage() throws {
+        let suiteName = "AIWebUsageMonitorTests.\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            XCTFail("테스트 UserDefaults를 생성하지 못했습니다.")
+            return
+        }
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        let session = WebAccountSession(
+            platform: .codex,
+            displayName: "Quota Warning",
+            refreshState: .ready,
+            snapshot: UsageSnapshot(
+                headline: "주의",
+                sourceURL: URL(string: "https://chatgpt.com/codex/settings/usage"),
+                debugExcerpt: "low quota",
+                quota: QuotaSnapshot(entries: [UsageQuotaEntry(label: "5시간 사용 한도", valueText: "10% 남음", progress: 0.1)]),
+                activity: ActivitySnapshot(),
+                taskSignals: PlatformTaskSignals(confidence: 0.2),
+                updatedAt: Date()
+            )
+        )
+        let store = AccountStore(defaults: defaults, inMemoryOnly: true)
+        store.saveAccounts([session])
+        let viewModel = makeViewModel(store: store)
+        let loaded = try XCTUnwrap(viewModel.sessions.first)
+
+        XCTAssertEqual(viewModel.sessionRiskReason(for: loaded), "사용 한도가 임계치에 근접했습니다.")
+        XCTAssertEqual(viewModel.primaryActionTitle(for: loaded), "새로고침")
+    }
+
     private func makeViewModel(store: AccountStore) -> UsageMonitorViewModel {
         UsageMonitorViewModel(
             sessionManager: WebSessionManager(),
