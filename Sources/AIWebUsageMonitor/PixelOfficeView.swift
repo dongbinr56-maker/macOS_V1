@@ -320,7 +320,7 @@ private struct PixelOfficeSceneCard: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .center, spacing: 10) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("PIXEL OFFICE")
+                    Text("픽셀 오피스")
                         .font(.system(size: 12, weight: .black, design: .monospaced))
                         .kerning(1.4)
                     Text(sceneSubtitle)
@@ -343,7 +343,7 @@ private struct PixelOfficeSceneCard: View {
                     .buttonStyle(.bordered)
                     .controlSize(.small)
                 } else {
-                    Text("\(agents.count)/\(totalAgentCount) AGENTS")
+                    Text("\(agents.count)/\(totalAgentCount) 세션")
                         .font(.system(size: 11, weight: .bold, design: .monospaced))
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 8)
@@ -458,10 +458,10 @@ private struct PixelOfficeCommandDeck: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .center, spacing: 10) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("OFFICE CONTROL")
+                    Text("오피스 컨트롤")
                         .font(.system(size: 11, weight: .black, design: .monospaced))
                         .kerning(1.2)
-                    Text("\(visibleAgentCount) visible · \(totalAgentCount) total")
+                    Text("노출 \(visibleAgentCount) · 전체 \(totalAgentCount)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

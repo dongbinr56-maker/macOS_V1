@@ -10,9 +10,9 @@ private enum MonitorDisplayMode: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .overview:
-            return "Overview"
+            return "개요"
         case .office:
-            return "Office"
+            return "오피스"
         }
     }
 }
@@ -703,6 +703,7 @@ struct SessionCardView: View {
     private func relativeTimestamp(from date: Date) -> String {
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .short
+        formatter.locale = Locale(identifier: "ko_KR")
         return formatter.localizedString(for: date, relativeTo: Date())
     }
 
