@@ -555,39 +555,6 @@ enum PixelOfficeSceneLayout {
         ]
     }
 
-    private static func waitingRoute(for agent: PixelOfficeAgent) -> [RouteStop] {
-        let corridorA = PixelOfficeTilePoint(col: 9, row: 13)
-        let corridorB = PixelOfficeTilePoint(col: 11, row: 13)
-        let corridorC = PixelOfficeTilePoint(col: 10, row: 9)
-        return [
-            RouteStop(tile: agent.seatTile, dwell: 0.8, seated: false, facing: .down),
-            RouteStop(tile: corridorA, dwell: 0.6, seated: false, facing: .up),
-            RouteStop(tile: corridorC, dwell: 0.7, seated: false, facing: .up),
-            RouteStop(tile: corridorB, dwell: 0.6, seated: false, facing: .right)
-        ]
-    }
-
-    private static func alertRoute(for agent: PixelOfficeAgent) -> [RouteStop] {
-        let utilityCenter = PixelOfficeTilePoint(col: 16, row: 4)
-        let utilityLeft = PixelOfficeTilePoint(col: 14, row: 4)
-        let doorway = PixelOfficeTilePoint(col: 12, row: 14)
-        if agent.seatTile.row <= 6 {
-            return [
-                RouteStop(tile: agent.seatTile, dwell: 1.8, seated: false, facing: agent.facing),
-                RouteStop(tile: utilityCenter, dwell: 0.8, seated: false, facing: .down),
-                RouteStop(tile: utilityLeft, dwell: 0.8, seated: false, facing: .left),
-                RouteStop(tile: agent.seatTile, dwell: 1.0, seated: false, facing: agent.facing)
-            ]
-        }
-
-        return [
-            RouteStop(tile: doorway, dwell: 1.0, seated: false, facing: .right),
-            RouteStop(tile: utilityCenter, dwell: 1.0, seated: false, facing: .down),
-            RouteStop(tile: utilityLeft, dwell: 0.7, seated: false, facing: .left),
-            RouteStop(tile: doorway, dwell: 0.7, seated: false, facing: .right)
-        ]
-    }
-
     private static func routeSeed(_ route: [RouteStop]) -> Double {
         route.reduce(0) { partialResult, stop in
             partialResult + Double(stop.tile.col * 31 + stop.tile.row * 17)
@@ -1068,25 +1035,6 @@ enum PixelOfficeSceneBuilder {
             SceneRouteStop(point: aisle, dwell: 0.8, seated: false, facing: .right),
             SceneRouteStop(point: topDesk, dwell: 0.9, seated: false, facing: .up),
             SceneRouteStop(point: agent.position, dwell: 0.8, seated: false, facing: .down)
-        ]
-    }
-
-    private static func waitingRoute(for agent: PixelOfficeAgent) -> [SceneRouteStop] {
-        let rightCenter = tileWaypoint(col: 9, row: 14)
-        return [
-            SceneRouteStop(point: agent.position, dwell: 0.5, seated: false, facing: .down),
-            SceneRouteStop(point: deskAisleLower, dwell: 0.5, seated: false, facing: .up),
-            SceneRouteStop(point: deskAisleUpper, dwell: 0.7, seated: false, facing: .up),
-            SceneRouteStop(point: rightCenter, dwell: 0.6, seated: false, facing: .right)
-        ]
-    }
-
-    private static func alertRoute(for agent: PixelOfficeAgent) -> [SceneRouteStop] {
-        return [
-            SceneRouteStop(point: agent.position, dwell: 1.0, seated: false, facing: agent.facing),
-            SceneRouteStop(point: utilityCenter, dwell: 1.0, seated: false, facing: .down),
-            SceneRouteStop(point: utilityLeft, dwell: 0.7, seated: false, facing: .left),
-            SceneRouteStop(point: rightDoorway, dwell: 0.7, seated: false, facing: .right)
         ]
     }
 

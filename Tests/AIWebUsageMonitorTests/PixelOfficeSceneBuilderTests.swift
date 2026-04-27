@@ -134,6 +134,45 @@ final class PixelOfficeSceneBuilderTests: XCTestCase {
         XCTAssertEqual(agents.first(where: { $0.displayName == "Idle" })?.zone, .lounge)
     }
 
+    func testWaitingAgentsRemainSeatedAndIdleDuringPoseUpdate() throws {
+        let waitingAgent = try XCTUnwrap(
+            PixelOfficeSceneBuilder.makeAgents(
+                from: [
+                    descriptor(name: "Waiting", platform: .codex, availability: .available, taskState: .waiting)
+                ]
+            ).first
+        )
+
+        let pose = PixelOfficeSceneBuilder.currentNormalizedPose(for: waitingAgent, timestamp: 42)
+        XCTAssertTrue(pose.isSeated)
+        XCTAssertEqual(pose.facing, .down)
+        switch pose.animationState {
+        case .idle:
+            break
+        case .walking, .typing, .reading:
+            XCTFail("Waiting state should stay seated and not animate as active work.")
+        }
+    }
+
+    func testQuotaLowAgentsRemainSeatedAndIdleDuringPoseUpdate() throws {
+        let quotaLowAgent = try XCTUnwrap(
+            PixelOfficeSceneBuilder.makeAgents(
+                from: [
+                    descriptor(name: "Quota Low", platform: .claude, availability: .low, taskState: .quotaLow)
+                ]
+            ).first
+        )
+
+        let pose = PixelOfficeSceneBuilder.currentNormalizedPose(for: quotaLowAgent, timestamp: 42)
+        XCTAssertTrue(pose.isSeated)
+        switch pose.animationState {
+        case .idle:
+            break
+        case .walking, .typing, .reading:
+            XCTFail("Alert state should not animate like a moving worker.")
+        }
+    }
+
     func testUnavailableAgentsUseLoungeSeatsButRemainAlerting() throws {
         let agents = PixelOfficeSceneBuilder.makeAgents(
             from: [
