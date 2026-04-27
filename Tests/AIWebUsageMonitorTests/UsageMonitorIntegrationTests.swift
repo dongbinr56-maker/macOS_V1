@@ -123,6 +123,137 @@ final class UsageMonitorIntegrationTests: XCTestCase {
         XCTAssertEqual(viewModel.sessionTaskState(for: loadedSession), .working)
     }
 
+    func testLocalLogSnapshotMarksClaudeSessionAsWaitingWhenWebConfidenceIsLow() throws {
+        let suiteName = "AIWebUsageMonitorTests.\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            XCTFail("테스트 UserDefaults를 생성하지 못했습니다.")
+            return
+        }
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        let now = Date()
+        let session = WebAccountSession(
+            id: UUID(),
+            platform: .claude,
+            displayName: "Claude Log Waiting",
+            dataStoreID: UUID(),
+            refreshState: .ready,
+            lastCheckedAt: now,
+            snapshot: UsageSnapshot(
+                headline: "사용 가능",
+                sourceURL: URL(string: "https://claude.ai/settings/usage"),
+                debugExcerpt: "quota loaded",
+                quota: QuotaSnapshot(
+                    entries: [
+                        UsageQuotaEntry(
+                            label: "Weekly usage limit",
+                            valueText: "80% remaining",
+                            progress: 0.8
+                        )
+                    ]
+                ),
+                activity: ActivitySnapshot(
+                    lastNetworkAt: now.addingTimeInterval(-150),
+                    lastDOMMutationAt: now.addingTimeInterval(-150),
+                    recentRequestCount: 0,
+                    inFlightRequestCount: 0,
+                    pageBusyState: "ready"
+                ),
+                taskSignals: PlatformTaskSignals(
+                    latestUserPromptPreview: "old prompt",
+                    isStreaming: false,
+                    isWaitingForAssistant: false,
+                    confidence: 0.2
+                ),
+                updatedAt: now
+            )
+        )
+
+        let store = AccountStore(defaults: defaults, inMemoryOnly: true)
+        store.saveAccounts([session])
+
+        let viewModel = makeViewModel(store: store)
+        viewModel.applyLocalLogSnapshot(
+            LocalLogSnapshot(
+                state: .waiting,
+                lastObservedAt: now,
+                summary: "Claude 로컬 로그에서 요청 수신 신호가 감지되었습니다."
+            ),
+            for: .claude
+        )
+
+        let loadedSession = try XCTUnwrap(viewModel.sessions.first)
+        XCTAssertEqual(viewModel.sessionTaskState(for: loadedSession), .waiting)
+    }
+
+    func testLocalLogSnapshotDoesNotOverrideStrongWebSignals() throws {
+        let suiteName = "AIWebUsageMonitorTests.\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            XCTFail("테스트 UserDefaults를 생성하지 못했습니다.")
+            return
+        }
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        let now = Date()
+        let session = WebAccountSession(
+            id: UUID(),
+            platform: .claude,
+            displayName: "Claude Strong Signals",
+            dataStoreID: UUID(),
+            refreshState: .ready,
+            lastCheckedAt: now,
+            snapshot: UsageSnapshot(
+                headline: "사용 가능",
+                sourceURL: URL(string: "https://claude.ai/settings/usage"),
+                debugExcerpt: "quota loaded",
+                quota: QuotaSnapshot(
+                    entries: [
+                        UsageQuotaEntry(
+                            label: "Weekly usage limit",
+                            valueText: "78% remaining",
+                            progress: 0.78
+                        )
+                    ]
+                ),
+                activity: ActivitySnapshot(
+                    lastNetworkAt: now,
+                    lastDOMMutationAt: now,
+                    recentRequestCount: 1,
+                    inFlightRequestCount: 1,
+                    pageBusyState: "loading"
+                ),
+                taskSignals: PlatformTaskSignals(
+                    latestUserPromptPreview: "Build monitor",
+                    latestAssistantPreview: "Responding now",
+                    isStreaming: true,
+                    isWaitingForAssistant: false,
+                    confidence: 0.92
+                ),
+                updatedAt: now
+            )
+        )
+
+        let store = AccountStore(defaults: defaults, inMemoryOnly: true)
+        store.saveAccounts([session])
+
+        let viewModel = makeViewModel(store: store)
+        viewModel.applyLocalLogSnapshot(
+            LocalLogSnapshot(
+                state: .idle,
+                lastObservedAt: now,
+                summary: "Claude 로컬 로그에서 최근 작업 신호가 없습니다."
+            ),
+            for: .claude
+        )
+
+        let loadedSession = try XCTUnwrap(viewModel.sessions.first)
+        XCTAssertEqual(viewModel.sessionTaskState(for: loadedSession), .responding)
+    }
+
     func testAccountStoreRoundTripsTaskSignalsAndCleansAlertStatesForRemovedSession() throws {
         let suiteName = "AIWebUsageMonitorTests.\(UUID().uuidString)"
         guard let defaults = UserDefaults(suiteName: suiteName) else {

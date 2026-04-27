@@ -16,8 +16,11 @@ final class UsageMonitorViewModel: ObservableObject {
     private let idleThreshold: TimeInterval
     private let staleThreshold: TimeInterval
     private let refreshConcurrencyLimit: Int
+    private let localLogMonitor: LocalLogMonitor
     private var timer: Timer?
     private var refreshInFlight = Set<UUID>()
+    private var localLogSnapshots: [AIPlatform: LocalLogSnapshot] = [:]
+    private var lastLocalLogRefreshAt: Date?
 
     private struct SessionMetrics {
         var total = 0
@@ -156,7 +159,8 @@ final class UsageMonitorViewModel: ObservableObject {
             lowQuotaThreshold: 0.20,
             idleThreshold: 10 * 60,
             staleThreshold: 15 * 60,
-            refreshConcurrencyLimit: 2
+            refreshConcurrencyLimit: 2,
+            localLogMonitor: LocalLogMonitor()
         )
     }
 
@@ -169,7 +173,8 @@ final class UsageMonitorViewModel: ObservableObject {
         lowQuotaThreshold: Double,
         idleThreshold: TimeInterval,
         staleThreshold: TimeInterval,
-        refreshConcurrencyLimit: Int
+        refreshConcurrencyLimit: Int,
+        localLogMonitor: LocalLogMonitor = LocalLogMonitor()
     ) {
         self.sessionManager = sessionManager
         self.accountStore = accountStore
@@ -180,6 +185,7 @@ final class UsageMonitorViewModel: ObservableObject {
         self.idleThreshold = idleThreshold
         self.staleThreshold = staleThreshold
         self.refreshConcurrencyLimit = max(1, refreshConcurrencyLimit)
+        self.localLogMonitor = localLogMonitor
         self.sessions = accountStore.loadAccounts()
 
         for account in sessions {
@@ -190,6 +196,9 @@ final class UsageMonitorViewModel: ObservableObject {
     func start() {
         refreshNotificationAuthorizationStatus()
         startAutoRefresh()
+        Task {
+            await refreshLocalLogSnapshotsIfNeeded(force: true)
+        }
 
         guard !sessions.isEmpty else {
             return
@@ -335,6 +344,7 @@ final class UsageMonitorViewModel: ObservableObject {
 
         isRefreshingAll = true
         defer { isRefreshingAll = false }
+        await refreshLocalLogSnapshotsIfNeeded()
 
         let accountIDs = sessions.map(\.id)
         guard !accountIDs.isEmpty else {
@@ -463,6 +473,16 @@ final class UsageMonitorViewModel: ObservableObject {
 
     func sessionTaskContext(for session: WebAccountSession) -> SessionTaskContext {
         taskContext(for: session)
+    }
+
+    func applyLocalLogSnapshot(_ snapshot: LocalLogSnapshot?, for platform: AIPlatform) {
+        objectWillChange.send()
+        if let snapshot {
+            localLogSnapshots[platform] = snapshot
+        } else {
+            localLogSnapshots.removeValue(forKey: platform)
+        }
+        lastLocalLogRefreshAt = Date()
     }
 
     func sessionTaskState(for session: WebAccountSession) -> SessionTaskState {
@@ -605,6 +625,7 @@ final class UsageMonitorViewModel: ObservableObject {
 
 extension UsageMonitorViewModel {
     private func taskContext(for session: WebAccountSession) -> SessionTaskContext {
+        let localLogSnapshot = localLogSnapshots[session.platform]
         let signals = session.snapshot?.taskSignals ?? PlatformTaskSignals()
         let lastMeaningfulActivityAt = [
             session.snapshot?.activity.lastNetworkAt,
@@ -617,7 +638,8 @@ extension UsageMonitorViewModel {
             conversationTitle: signals.confidence >= 0.25 ? signals.meaningfulConversationTitle : nil,
             latestUserPromptPreview: signals.normalizedLatestUserPromptPreview,
             latestAssistantStateText: signals.normalizedLatestAssistantPreview
-                ?? (signals.confidence >= 0.2 ? signals.normalizedBusyIndicatorText : nil),
+                ?? (signals.confidence >= 0.2 ? signals.normalizedBusyIndicatorText : nil)
+                ?? localLogSnapshot?.summary,
             isStreamingResponse: signals.confidence >= 0.3 && signals.isStreaming,
             isUserWaitingForReply: signals.confidence >= 0.28 && signals.isWaitingForAssistant,
             lastMeaningfulActivityAt: lastMeaningfulActivityAt,
@@ -649,6 +671,11 @@ extension UsageMonitorViewModel {
 
         if availability == .low {
             return .quotaLow
+        }
+
+        if let localState = localLogTaskState(for: session.platform),
+           shouldApplyLocalLogState(localState, context: context) {
+            return localState
         }
 
         let hasRecentTaskActivity = isRecent(context.lastMeaningfulActivityAt, within: 90)
@@ -702,6 +729,59 @@ extension UsageMonitorViewModel {
 
         return snapshot.taskSignals.normalizedBusyIndicatorText != nil
             || snapshot.taskSignals.normalizedLatestAssistantPreview != nil
+    }
+
+    private func localLogTaskState(for platform: AIPlatform, now: Date = Date()) -> SessionTaskState? {
+        guard let snapshot = localLogSnapshots[platform] else {
+            return nil
+        }
+
+        guard now.timeIntervalSince(snapshot.lastObservedAt) <= 120 else {
+            return nil
+        }
+
+        switch snapshot.state {
+        case .waiting:
+            return .waiting
+        case .working:
+            return .working
+        case .idle:
+            return .idle
+        }
+    }
+
+    private func shouldApplyLocalLogState(_ state: SessionTaskState, context: SessionTaskContext) -> Bool {
+        switch state {
+        case .working, .waiting:
+            return context.sourceConfidence < 0.55 && !isRecent(context.lastMeaningfulActivityAt, within: 25)
+        case .idle:
+            return context.sourceConfidence < 0.35
+        case .responding, .needsLogin, .quotaLow, .blocked, .stale, .error:
+            return false
+        }
+    }
+
+    private func refreshLocalLogSnapshotsIfNeeded(force: Bool = false, now: Date = Date()) async {
+        let shouldRefresh = force || localLogSnapshots.isEmpty || {
+            guard let lastLocalLogRefreshAt else {
+                return true
+            }
+            return now.timeIntervalSince(lastLocalLogRefreshAt) >= 2
+        }()
+
+        guard shouldRefresh else {
+            return
+        }
+
+        let snapshots = await localLogMonitor.captureSnapshots(now: now)
+        guard snapshots != localLogSnapshots else {
+            lastLocalLogRefreshAt = now
+            return
+        }
+
+        objectWillChange.send()
+        localLogSnapshots = snapshots
+        lastLocalLogRefreshAt = now
     }
 
 }
