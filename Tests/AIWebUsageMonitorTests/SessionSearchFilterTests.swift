@@ -5,6 +5,8 @@ final class SessionSearchFilterTests: XCTestCase {
     func testMeaningfulConversationTitleDropsGenericUsageTitles() {
         XCTAssertNil(PlatformTaskSignals(conversationTitle: "설정").meaningfulConversationTitle)
         XCTAssertNil(PlatformTaskSignals(conversationTitle: "Usage").meaningfulConversationTitle)
+        XCTAssertNil(PlatformTaskSignals(conversationTitle: "Codex 애널리틱스").meaningfulConversationTitle)
+        XCTAssertNil(PlatformTaskSignals(conversationTitle: "Codex Analytics").meaningfulConversationTitle)
         XCTAssertEqual(
             PlatformTaskSignals(conversationTitle: "Build pixel office").meaningfulConversationTitle,
             "Build pixel office"

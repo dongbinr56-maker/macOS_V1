@@ -26,7 +26,7 @@ struct MenuBarPopoverView: View {
     @AppStorage("menuBarDisplayMode") private var displayModeRaw = MonitorDisplayMode.overview.rawValue
 
     private var displayMode: MonitorDisplayMode {
-        get { MonitorDisplayMode(rawValue: displayModeRaw) ?? .office }
+        get { MonitorDisplayMode(rawValue: displayModeRaw) ?? .overview }
         nonmutating set { displayModeRaw = newValue.rawValue }
     }
 
@@ -103,32 +103,36 @@ struct MenuBarPopoverView: View {
 
                 Spacer()
 
-                Picker("화면 모드", selection: Binding(
-                    get: { displayMode },
-                    set: { displayMode = $0 }
-                )) {
-                    ForEach(MonitorDisplayMode.allCases) { mode in
-                        Text(mode.title).tag(mode)
+                HStack(alignment: .center, spacing: 8) {
+                    Picker("화면 모드", selection: Binding(
+                        get: { displayMode },
+                        set: { displayMode = $0 }
+                    )) {
+                        ForEach(MonitorDisplayMode.allCases) { mode in
+                            Text(mode.title).tag(mode)
+                        }
                     }
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 148)
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .frame(width: 148)
 
-                if let lastFullRefreshAt = viewModel.lastFullRefreshAt {
-                    Text("갱신 \(relativeTimestamp(from: lastFullRefreshAt))")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    if let lastFullRefreshAt = viewModel.lastFullRefreshAt {
+                        Text("갱신 \(relativeTimestamp(from: lastFullRefreshAt))")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    Button {
+                        showingSettings = true
+                    } label: {
+                        Image(systemName: "gearshape")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 30, height: 30)
+                            .background(Circle().fill(Color.white.opacity(0.05)))
+                    }
+                    .buttonStyle(.plain)
                 }
-                Button {
-                    showingSettings = true
-                } label: {
-                    Image(systemName: "gearshape")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 30, height: 30)
-                        .background(Circle().fill(Color.white.opacity(0.05)))
-                }
-                .buttonStyle(.plain)
             }
 
             searchBar
@@ -142,6 +146,7 @@ struct MenuBarPopoverView: View {
     private func relativeTimestamp(from date: Date) -> String {
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .short
+        formatter.locale = Locale(identifier: "ko_KR")
         return formatter.localizedString(for: date, relativeTo: Date())
     }
 
@@ -154,6 +159,7 @@ struct MenuBarPopoverView: View {
             TextField("세션, 프로필, 화면 제목, 프롬프트 검색", text: $searchText)
                 .textFieldStyle(.plain)
                 .font(.caption)
+                .lineLimit(1)
 
             if searchFilter.isActive {
                 Text("\(visibleSessions.count)")
@@ -232,6 +238,7 @@ struct HeaderStatusPill: View {
             Text(summary.title)
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.primary)
+                .lineLimit(1)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
@@ -703,6 +710,7 @@ private struct SessionPrimaryActionMenu: View {
             }
             .menuStyle(.borderlessButton)
             .controlSize(.small)
+            .font(.caption.weight(.semibold))
 
             Menu("더보기") {
                 Button("새로고침") {
@@ -721,6 +729,7 @@ private struct SessionPrimaryActionMenu: View {
             }
             .menuStyle(.borderlessButton)
             .controlSize(.small)
+            .font(.caption.weight(.semibold))
         }
     }
 }

@@ -258,7 +258,7 @@ extension PresentationState {
         case .idle:
             return PresentationStateToken(
                 state: .idle,
-                title: "유휴",
+                title: "모니터링",
                 shortTitle: "IDLE",
                 priority: 3
             )
@@ -438,7 +438,11 @@ struct PlatformTaskSignals: Codable, Equatable {
             "usage limit",
             "weekly usage",
             "rate limit",
+            "analytics",
+            "codex analytics",
+            "claude analytics",
             "current session",
+            "애널리틱스",
             "주간 한도",
             "현재 세션",
             "현재 사용량"

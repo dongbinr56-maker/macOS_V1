@@ -99,11 +99,11 @@ final class UsageMonitorViewModel: ObservableObject {
 
         if metrics.idle == metrics.total {
             return PlatformHealthSummary(
-                health: .idle,
-                title: "유휴 상태",
-                subtitle: "모든 세션이 최근 활동 없이 유지되고 있습니다.",
-                symbolName: "pause.circle.fill",
-                accessibilityLabel: "세션 유휴 상태"
+                health: .available,
+                title: "정상 모니터링",
+                subtitle: "모든 세션이 안정적으로 연결되어 있습니다.",
+                symbolName: "checkmark.circle.fill",
+                accessibilityLabel: "정상 모니터링"
             )
         }
 
