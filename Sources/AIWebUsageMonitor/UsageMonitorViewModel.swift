@@ -497,6 +497,22 @@ final class UsageMonitorViewModel: ObservableObject {
         )
     }
 
+    func presentationState(for session: WebAccountSession) -> PresentationState {
+        let taskState = sessionTaskState(for: session)
+        switch taskState {
+        case .working, .responding:
+            return .working
+        case .waiting:
+            return .waiting
+        case .idle:
+            return .idle
+        case .quotaLow, .stale:
+            return .atRisk
+        case .needsLogin, .blocked, .error:
+            return .blocked
+        }
+    }
+
     private func startAutoRefresh() {
         timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: refreshInterval, repeats: true) { [weak self] _ in

@@ -221,6 +221,65 @@ enum SessionTaskState: String, Codable {
     case error
 }
 
+enum PresentationState: String, Codable, CaseIterable, Identifiable {
+    case working
+    case waiting
+    case idle
+    case atRisk
+    case blocked
+
+    var id: String { rawValue }
+}
+
+struct PresentationStateToken: Equatable {
+    let state: PresentationState
+    let title: String
+    let shortTitle: String
+    let priority: Int
+}
+
+extension PresentationState {
+    var token: PresentationStateToken {
+        switch self {
+        case .working:
+            return PresentationStateToken(
+                state: .working,
+                title: "작업 중",
+                shortTitle: "WORK",
+                priority: 2
+            )
+        case .waiting:
+            return PresentationStateToken(
+                state: .waiting,
+                title: "응답 대기",
+                shortTitle: "WAIT",
+                priority: 1
+            )
+        case .idle:
+            return PresentationStateToken(
+                state: .idle,
+                title: "유휴",
+                shortTitle: "IDLE",
+                priority: 3
+            )
+        case .atRisk:
+            return PresentationStateToken(
+                state: .atRisk,
+                title: "주의",
+                shortTitle: "RISK",
+                priority: 0
+            )
+        case .blocked:
+            return PresentationStateToken(
+                state: .blocked,
+                title: "차단",
+                shortTitle: "BLOCK",
+                priority: -1
+            )
+        }
+    }
+}
+
 enum AppHealth {
     case empty
     case checking

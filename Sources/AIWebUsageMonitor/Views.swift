@@ -2,17 +2,17 @@ import AppKit
 import SwiftUI
 
 private enum MonitorDisplayMode: String, CaseIterable, Identifiable {
+    case overview
     case office
-    case list
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
+        case .overview:
+            return "Overview"
         case .office:
             return "Office"
-        case .list:
-            return "List"
         }
     }
 }
@@ -23,7 +23,7 @@ struct MenuBarPopoverView: View {
     @ObservedObject var viewModel: UsageMonitorViewModel
     @State private var showingSettings = false
     @State private var searchText = ""
-    @AppStorage("menuBarDisplayMode") private var displayModeRaw = MonitorDisplayMode.office.rawValue
+    @AppStorage("menuBarDisplayMode") private var displayModeRaw = MonitorDisplayMode.overview.rawValue
 
     private var displayMode: MonitorDisplayMode {
         get { MonitorDisplayMode(rawValue: displayModeRaw) ?? .office }
@@ -478,12 +478,8 @@ struct SessionCardView: View {
 
             HStack(spacing: 8) {
                 SessionStateBadge(
-                    text: availabilityText,
-                    color: availabilityColor
-                )
-                SessionStateBadge(
-                    text: activityText,
-                    color: activityColor
+                    text: presentationToken.title,
+                    color: presentationColor
                 )
                 if let sourceURL = account.snapshot?.sourceURL {
                     SessionStateBadge(
@@ -494,69 +490,28 @@ struct SessionCardView: View {
             }
 
             HStack(spacing: 8) {
-                Button("대시보드") {
-                    NSWorkspace.shared.open(account.snapshot?.sourceURL ?? account.platform.dashboardURL)
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
-
-                if let sourceURL = account.snapshot?.sourceURL {
-                    Button("원본") {
-                        NSWorkspace.shared.open(sourceURL)
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                }
-
-                Button("새로고침") {
-                    Task {
-                        await viewModel.refresh(accountID: account.id)
-                    }
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-
-                if account.refreshState == .requiresLogin || account.refreshState == .failed {
-                    Button("로그인") {
-                        viewModel.reopenLoginWindow(for: account.id)
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                }
-
-                Menu("복사") {
-                    if let title = normalized(taskContext.conversationTitle) {
-                        Button("화면 제목 복사") {
-                            copyTextToPasteboard(title)
+                SessionPrimaryActionMenu(
+                    primaryTitle: primaryButtonTitle,
+                    onPrimaryAction: primaryAction,
+                    onRefresh: {
+                        Task {
+                            await viewModel.refresh(accountID: account.id)
                         }
-                    }
-
-                    if let prompt = normalized(taskContext.latestUserPromptPreview) {
-                        Button("프롬프트 복사") {
-                            copyTextToPasteboard(prompt)
-                        }
-                    }
-
-                    if let status = normalized(taskContext.latestAssistantStateText) {
-                        Button("응답 상태 복사") {
-                            copyTextToPasteboard(status)
-                        }
-                    }
-
-                    if let sourceURL = account.snapshot?.sourceURL {
-                        Button("원본 URL 복사") {
-                            copyTextToPasteboard(sourceURL.absoluteString)
-                        }
-                    }
-                }
-                .menuStyle(.borderlessButton)
-                .controlSize(.small)
+                    },
+                    onOpenSource: account.snapshot?.sourceURL.map { sourceURL in
+                        { NSWorkspace.shared.open(sourceURL) }
+                    },
+                    onOpenLogin: (account.refreshState == .requiresLogin || account.refreshState == .failed)
+                        ? { viewModel.reopenLoginWindow(for: account.id) }
+                        : nil,
+                    copyItems: copyMenuItems
+                )
             }
 
             if showsTaskContext {
                 SessionTaskContextCard(
                     context: taskContext,
-                    accent: availabilityColor
+                    accent: presentationColor
                 )
             }
 
@@ -638,62 +593,38 @@ struct SessionCardView: View {
         }
     }
 
-    private var availabilityText: String {
-        switch viewModel.availability(for: account) {
-        case .unknown:
-            return "상태 미확인"
-        case .available:
-            return "사용 가능"
-        case .low:
-            return "한도 주의"
-        case .blocked:
-            return "사용 불가"
-        }
+    private var presentationToken: PresentationStateToken {
+        viewModel.presentationState(for: account).token
     }
 
-    private var availabilityColor: Color {
-        switch viewModel.availability(for: account) {
-        case .unknown:
-            return .secondary
-        case .available:
-            return .green
-        case .low:
-            return .orange
-        case .blocked:
-            return .red
-        }
-    }
-
-    private var activityText: String {
-        switch viewModel.activityState(for: account) {
-        case .unknown:
-            return "활동 미확인"
-        case .loading:
-            return "작업중"
-        case .active:
-            return "작업중"
+    private var presentationColor: Color {
+        switch presentationToken.state {
+        case .working:
+            return Color(red: 0.20, green: 0.73, blue: 0.49)
         case .waiting:
-            return "대기중"
+            return Color(red: 0.27, green: 0.62, blue: 0.96)
         case .idle:
-            return "쉬는중"
-        case .stale:
-            return "지연"
+            return .secondary
+        case .atRisk:
+            return Color(red: 0.96, green: 0.67, blue: 0.29)
+        case .blocked:
+            return Color(red: 0.92, green: 0.36, blue: 0.38)
         }
     }
 
-    private var activityColor: Color {
-        switch viewModel.activityState(for: account) {
-        case .unknown:
-            return .secondary
-        case .loading, .active:
-            return .blue
-        case .waiting:
-            return .teal
-        case .idle:
-            return .indigo
-        case .stale:
-            return .orange
+    private var primaryButtonTitle: String {
+        if account.refreshState == .requiresLogin || account.refreshState == .failed {
+            return "로그인"
         }
+        return "열기"
+    }
+
+    private func primaryAction() {
+        if account.refreshState == .requiresLogin || account.refreshState == .failed {
+            viewModel.reopenLoginWindow(for: account.id)
+            return
+        }
+        NSWorkspace.shared.open(account.snapshot?.sourceURL ?? account.platform.dashboardURL)
     }
 
     private func relativeTimestamp(from date: Date) -> String {
@@ -721,6 +652,76 @@ struct SessionCardView: View {
 
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private var copyMenuItems: [SessionPrimaryActionMenu.CopyMenuItem] {
+        var items: [SessionPrimaryActionMenu.CopyMenuItem] = []
+        if let title = normalized(taskContext.conversationTitle) {
+            items.append(.init(title: "화면 제목 복사", value: title))
+        }
+        if let prompt = normalized(taskContext.latestUserPromptPreview) {
+            items.append(.init(title: "프롬프트 복사", value: prompt))
+        }
+        if let status = normalized(taskContext.latestAssistantStateText) {
+            items.append(.init(title: "응답 상태 복사", value: status))
+        }
+        if let sourceURL = account.snapshot?.sourceURL {
+            items.append(.init(title: "원본 URL 복사", value: sourceURL.absoluteString))
+        }
+        return items
+    }
+}
+
+private struct SessionPrimaryActionMenu: View {
+    struct CopyMenuItem: Identifiable {
+        let id = UUID()
+        let title: String
+        let value: String
+    }
+
+    let primaryTitle: String
+    let onPrimaryAction: () -> Void
+    let onRefresh: () -> Void
+    let onOpenSource: (() -> Void)?
+    let onOpenLogin: (() -> Void)?
+    let copyItems: [CopyMenuItem]
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Button(primaryTitle) {
+                onPrimaryAction()
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+
+            Menu("복사") {
+                ForEach(copyItems) { item in
+                    Button(item.title) {
+                        copyTextToPasteboard(item.value)
+                    }
+                }
+            }
+            .menuStyle(.borderlessButton)
+            .controlSize(.small)
+
+            Menu("더보기") {
+                Button("새로고침") {
+                    onRefresh()
+                }
+                if let onOpenSource {
+                    Button("원본 열기") {
+                        onOpenSource()
+                    }
+                }
+                if let onOpenLogin {
+                    Button("로그인 창 열기") {
+                        onOpenLogin()
+                    }
+                }
+            }
+            .menuStyle(.borderlessButton)
+            .controlSize(.small)
+        }
     }
 }
 

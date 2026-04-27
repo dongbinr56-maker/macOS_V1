@@ -424,7 +424,7 @@ enum PixelOfficeSceneLayout {
                 animationState: .reading,
                 isSeated: true
             )
-        case .idle, .stale:
+        case .idle:
             return routePose(
                 route: idleRoute(for: agent),
                 timestamp: timestamp,
@@ -432,21 +432,26 @@ enum PixelOfficeSceneLayout {
                 fallbackFacing: agent.facing,
                 stationaryState: .idle
             )
+        case .stale:
+            return PixelOfficeAnimatedPose(
+                point: metrics.center(of: agent.seatTile),
+                facing: agent.facing,
+                animationState: .idle,
+                isSeated: true
+            )
         case .waiting:
-            return routePose(
-                route: waitingRoute(for: agent),
-                timestamp: timestamp,
-                metrics: metrics,
-                fallbackFacing: .down,
-                stationaryState: .idle
+            return PixelOfficeAnimatedPose(
+                point: metrics.center(of: agent.seatTile),
+                facing: .down,
+                animationState: .idle,
+                isSeated: true
             )
         case .needsLogin, .quotaLow, .blocked, .error:
-            return routePose(
-                route: alertRoute(for: agent),
-                timestamp: timestamp,
-                metrics: metrics,
-                fallbackFacing: agent.facing,
-                stationaryState: .idle
+            return PixelOfficeAnimatedPose(
+                point: metrics.center(of: agent.seatTile),
+                facing: agent.facing,
+                animationState: .idle,
+                isSeated: true
             )
         }
     }
@@ -942,12 +947,19 @@ enum PixelOfficeSceneBuilder {
                 animationState: .reading,
                 isSeated: true
             )
-        case .idle, .stale:
+        case .idle:
             return routePoseState(
                 route: idleRoute(for: agent),
                 timestamp: timestamp,
                 fallbackFacing: agent.facing,
                 stationaryState: .idle
+            )
+        case .stale:
+            return ScenePoseState(
+                point: agent.position,
+                facing: agent.facing,
+                animationState: .idle,
+                isSeated: true
             )
         case .needsLogin, .blocked, .error:
             return ScenePoseState(
@@ -957,18 +969,18 @@ enum PixelOfficeSceneBuilder {
                 isSeated: true
             )
         case .waiting:
-            return routePoseState(
-                route: waitingRoute(for: agent),
-                timestamp: timestamp,
-                fallbackFacing: .down,
-                stationaryState: .idle
+            return ScenePoseState(
+                point: agent.position,
+                facing: .down,
+                animationState: .idle,
+                isSeated: true
             )
         case .quotaLow:
-            return routePoseState(
-                route: alertRoute(for: agent),
-                timestamp: timestamp,
-                fallbackFacing: agent.facing,
-                stationaryState: .idle
+            return ScenePoseState(
+                point: agent.position,
+                facing: agent.facing,
+                animationState: .idle,
+                isSeated: true
             )
         }
     }
@@ -1502,7 +1514,7 @@ enum PixelOfficeSceneBuilder {
 
         let working = agents.filter { $0.zone == .desk }.count
         let alerting = agents.filter(\.isAlerting).count
-        let lounging = agents.filter { $0.zone == .lounge }.count
+        let lounging = agents.filter { $0.zone == .lounge && !$0.isAlerting }.count
 
         let title: String
         if alerting > 0 {

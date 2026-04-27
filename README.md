@@ -1,13 +1,13 @@
 # AI Web Ops Monitor
 
-`AI Web Ops Monitor`는 macOS 메뉴바에서 Codex, Claude, Cursor 웹 세션을 추적하는 운영용 앱입니다. 공식 API 없이 로그인된 웹 세션을 유지한 채 usage 페이지와 대시보드를 읽고, 결과를 `List` 화면과 `Pixel Office` 화면으로 보여줍니다.
+`AI Web Ops Monitor`는 macOS 메뉴바에서 Codex, Claude, Cursor 웹 세션을 추적하는 운영용 앱입니다. 공식 API 없이 로그인된 웹 세션을 유지한 채 usage 페이지와 대시보드를 읽고, 결과를 `Overview` 화면과 `Pixel Office` 화면으로 보여줍니다.
 
 ## 핵심 기능
 
 - macOS 메뉴바 앱
 - Codex, Claude, Cursor 세션 추가 및 재로그인
 - 세션별 독립 `WKWebsiteDataStore` 사용
-- `List` 모드와 `Pixel Office` 모드 제공
+- `Overview` 모드와 `Pixel Office` 모드 제공
 - 세션 검색, 플랫폼 필터, 상태 필터, 인스펙터 UI
 - 60초 주기 자동 새로고침, 최대 동시 2세션 새로고침
 - 낮은 한도, 로그인 필요, 차단, stale, refresh 실패 알림
@@ -38,13 +38,13 @@
 
 즉 오래된 제목이나 대기 중인 화면만으로는 `작업 중`으로 올리지 않고, 최근 명시적 작업 신호가 있을 때만 `working / responding / waiting`으로 분류합니다.
 
-### Pixel Office 동작
+### Pixel Office 동작 (V2)
 
-- `working`, `responding`, `waiting` 세션은 워크스테이션 책상 구역에 배치됩니다.
-- `idle` 세션은 라운지 좌석과 주변 동선에서 쉬는 상태로 보입니다.
-- `needsLogin`, `blocked`, `error` 세션은 `경고 상태`로 유지되지만 물리적으로는 라운지 소파에 앉아 있습니다.
-- `quotaLow`, `stale` 세션은 alert 동선에서 순회합니다.
-- 상태가 바뀌면 캐릭터가 이전 위치에서 새 위치까지 실제로 걸어갑니다.
+- `working`, `responding` 세션은 워크스테이션에 고정되고 작업 포즈를 표시합니다.
+- `waiting` 세션은 과한 순회 대신 좌석 중심 정지 상태로 표시됩니다.
+- `idle` 세션은 라운지에서 최소 유휴 동작만 유지합니다.
+- `needsLogin`, `blocked`, `error`, `quotaLow`, `stale` 세션은 경고 도트 중심으로 표시됩니다.
+- 상태 전환 시에만 제한적으로 이동하며, 평상시 과한 이동 연출은 줄였습니다.
 - 이동 경로는 오피스 내부 안전 타일만 통과하도록 제한되어 벽 밖으로 벗어나지 않습니다.
 
 세부 규칙은 [docs/PIXEL_OFFICE.md](docs/PIXEL_OFFICE.md)에 정리했습니다.
@@ -58,11 +58,11 @@
 
 ## 화면 구성
 
-### List
+### Overview
 
-- 플랫폼별 운영 카드
-- quota 카드, reset 정보, refresh 상태, 에러 문구
-- 원본 페이지 열기, 로그인, 복사, 새로고침 액션
+- 플랫폼별 운영 카드(상태 우선 정렬)
+- 핵심 quota 1~2개 + 최소 컨텍스트 중심 카드
+- Primary CTA 1개 + `더보기` 메뉴 기반 액션 구조
 
 ### Pixel Office
 

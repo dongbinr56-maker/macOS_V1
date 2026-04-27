@@ -105,11 +105,11 @@ private final class PixelOfficeMotionCoordinator: ObservableObject {
         }
 
         if currentAgent.taskState != nextAgent.taskState,
-           currentAgent.taskState == .idle || nextAgent.taskState == .idle || nextAgent.taskState == .waiting {
+           nextAgent.taskState == .working || nextAgent.taskState == .blocked || nextAgent.taskState == .quotaLow {
             return true
         }
 
-        return distance(from: currentPoint, to: nextAgent.position) > 0.008
+        return distance(from: currentPoint, to: nextAgent.position) > 0.02
     }
 
     private func distance(from lhs: CGPoint, to rhs: CGPoint) -> CGFloat {
@@ -1088,9 +1088,15 @@ private struct PixelOfficeAgentView: View {
                         .offset(y: -36)
                 }
 
-                if let bubbleText = bubbleText {
-                    PixelOfficeBubble(text: bubbleText, color: bubbleColor)
-                        .offset(x: bubbleXOffset, y: -52)
+                if statusDotColor != .clear {
+                    Circle()
+                        .fill(statusDotColor)
+                        .frame(width: 10, height: 10)
+                        .overlay(
+                            Circle()
+                                .stroke(Color.white.opacity(0.8), lineWidth: 1)
+                        )
+                        .offset(x: 18, y: -22)
                 }
 
                 PixelOfficeCharacterSprite(
@@ -1115,50 +1121,18 @@ private struct PixelOfficeAgentView: View {
         }
     }
 
-    private var bubbleText: String? {
+    private var statusDotColor: Color {
         switch agent.taskState {
-        case .responding:
-            return "READ"
-        case .waiting:
-            return "WAIT"
-        case .quotaLow:
-            return "LOW"
-        case .needsLogin:
-            return "LOGIN"
-        case .blocked:
-            return "STOP"
-        case .error:
-            return "ERR"
-        case .stale:
-            return "LAG"
-        case .working, .idle:
-            return nil
-        }
-    }
-
-    private var bubbleColor: Color {
-        switch agent.taskState {
-        case .responding:
-            return Color(red: 0.42, green: 0.85, blue: 0.65)
+        case .working, .responding:
+            return Color(red: 0.22, green: 0.82, blue: 0.50)
         case .waiting:
             return Color(red: 0.35, green: 0.78, blue: 0.98)
         case .quotaLow, .stale:
             return Color(red: 0.98, green: 0.76, blue: 0.30)
         case .needsLogin, .blocked, .error:
             return Color(red: 0.98, green: 0.45, blue: 0.42)
-        case .working, .idle:
-            return agent.tint
-        }
-    }
-
-    private var bubbleXOffset: CGFloat {
-        switch pose.facing {
-        case .left:
-            return -18
-        case .right:
-            return 18
-        case .down, .up:
-            return agent.isAlerting ? 18 : 0
+        case .idle:
+            return .clear
         }
     }
 

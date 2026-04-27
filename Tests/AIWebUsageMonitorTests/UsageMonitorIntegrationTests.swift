@@ -123,6 +123,85 @@ final class UsageMonitorIntegrationTests: XCTestCase {
         XCTAssertEqual(viewModel.sessionTaskState(for: loadedSession), .working)
     }
 
+    func testPresentationStateMapsIdleSessionToIdle() throws {
+        let suiteName = "AIWebUsageMonitorTests.\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            XCTFail("테스트 UserDefaults를 생성하지 못했습니다.")
+            return
+        }
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        let session = WebAccountSession(
+            id: UUID(),
+            platform: .codex,
+            displayName: "Codex Idle",
+            dataStoreID: UUID(),
+            refreshState: .ready,
+            snapshot: UsageSnapshot(
+                headline: "사용 가능",
+                sourceURL: URL(string: "https://chatgpt.com/codex/settings/usage"),
+                debugExcerpt: "quota loaded",
+                quota: QuotaSnapshot(
+                    entries: [
+                        UsageQuotaEntry(label: "5시간 사용 한도", valueText: "84% 남음", progress: 0.84)
+                    ]
+                ),
+                activity: ActivitySnapshot(),
+                taskSignals: PlatformTaskSignals(confidence: 0.1),
+                updatedAt: Date()
+            )
+        )
+
+        let store = AccountStore(defaults: defaults, inMemoryOnly: true)
+        store.saveAccounts([session])
+        let viewModel = makeViewModel(store: store)
+        let loadedSession = try XCTUnwrap(viewModel.sessions.first)
+
+        XCTAssertEqual(viewModel.presentationState(for: loadedSession), .idle)
+    }
+
+    func testPresentationStateMapsLowQuotaToAtRisk() throws {
+        let suiteName = "AIWebUsageMonitorTests.\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            XCTFail("테스트 UserDefaults를 생성하지 못했습니다.")
+            return
+        }
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        let session = WebAccountSession(
+            id: UUID(),
+            platform: .codex,
+            displayName: "Codex Risk",
+            dataStoreID: UUID(),
+            refreshState: .ready,
+            snapshot: UsageSnapshot(
+                headline: "주의 필요",
+                sourceURL: URL(string: "https://chatgpt.com/codex/settings/usage"),
+                debugExcerpt: "quota low",
+                quota: QuotaSnapshot(
+                    entries: [
+                        UsageQuotaEntry(label: "5시간 사용 한도", valueText: "13% 남음", progress: 0.13),
+                        UsageQuotaEntry(label: "주간 사용 한도", valueText: "45% 남음", progress: 0.45)
+                    ]
+                ),
+                activity: ActivitySnapshot(),
+                taskSignals: PlatformTaskSignals(confidence: 0.1),
+                updatedAt: Date()
+            )
+        )
+
+        let store = AccountStore(defaults: defaults, inMemoryOnly: true)
+        store.saveAccounts([session])
+        let viewModel = makeViewModel(store: store)
+        let loadedSession = try XCTUnwrap(viewModel.sessions.first)
+
+        XCTAssertEqual(viewModel.presentationState(for: loadedSession), .atRisk)
+    }
+
     func testLocalLogSnapshotMarksClaudeSessionAsWaitingWhenWebConfidenceIsLow() throws {
         let suiteName = "AIWebUsageMonitorTests.\(UUID().uuidString)"
         guard let defaults = UserDefaults(suiteName: suiteName) else {
