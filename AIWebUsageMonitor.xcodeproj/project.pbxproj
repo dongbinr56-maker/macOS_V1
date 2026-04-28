@@ -19,9 +19,19 @@
 		A1000000000000000000001A /* WebSessionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000002A /* WebSessionManager.swift */; };
 		A1000000000000000000001B /* UsageAlertManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000002B /* UsageAlertManager.swift */; };
 		A1000000000000000000001C /* PixelOfficeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000002C /* PixelOfficeView.swift */; };
-		A10000000000000000000035 /* LocalLogMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000036 /* LocalLogMonitor.swift */; };
-		A10000000000000000000039 /* QuotaHistoryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000003A /* QuotaHistoryStore.swift */; };
-			A1000000000000000000001D /* PixelOfficeAssets in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000031 /* PixelOfficeAssets */; };
+			A10000000000000000000035 /* LocalLogMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000036 /* LocalLogMonitor.swift */; };
+			A10000000000000000000039 /* QuotaHistoryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000003A /* QuotaHistoryStore.swift */; };
+			A1000000000000000000003C /* PasteboardUtilities.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000003B /* PasteboardUtilities.swift */; };
+			A1000000000000000000003E /* PixelOfficeAgentViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000003D /* PixelOfficeAgentViews.swift */; };
+			A10000000000000000000040 /* PixelOfficeInspectorViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000003F /* PixelOfficeInspectorViews.swift */; };
+			A10000000000000000000042 /* PixelOfficeRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000041 /* PixelOfficeRuntime.swift */; };
+			A10000000000000000000044 /* PixelOfficeSceneViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000043 /* PixelOfficeSceneViews.swift */; };
+			A10000000000000000000046 /* PixelOfficeShellViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000045 /* PixelOfficeShellViews.swift */; };
+			A10000000000000000000048 /* SessionModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000047 /* SessionModels.swift */; };
+			A1000000000000000000004A /* SessionViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000049 /* SessionViews.swift */; };
+			A1000000000000000000004C /* SettingsViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000004B /* SettingsViews.swift */; };
+			A1000000000000000000004E /* UsageMonitorTaskState.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000004D /* UsageMonitorTaskState.swift */; };
+				A1000000000000000000001D /* PixelOfficeAssets in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000031 /* PixelOfficeAssets */; };
 			A1000000000000000000001E /* PixelOfficeSceneBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000032 /* PixelOfficeSceneBuilder.swift */; };
 			A1000000000000000000001F /* PixelOfficeAssets.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000033 /* PixelOfficeAssets.swift */; };
 			A10000000000000000000020 /* PixelOfficeSourceLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000034 /* PixelOfficeSourceLayout.swift */; };
@@ -41,9 +51,19 @@
 		A1000000000000000000002A /* WebSessionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebSessionManager.swift; sourceTree = "<group>"; };
 		A1000000000000000000002B /* UsageAlertManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageAlertManager.swift; sourceTree = "<group>"; };
 		A1000000000000000000002C /* PixelOfficeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PixelOfficeView.swift; sourceTree = "<group>"; };
-		A10000000000000000000036 /* LocalLogMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalLogMonitor.swift; sourceTree = "<group>"; };
-		A1000000000000000000003A /* QuotaHistoryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuotaHistoryStore.swift; sourceTree = "<group>"; };
-		A10000000000000000000030 /* AIWebUsageMonitor-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = AIWebUsageMonitor-Info.plist; sourceTree = SOURCE_ROOT; };
+			A10000000000000000000036 /* LocalLogMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalLogMonitor.swift; sourceTree = "<group>"; };
+			A1000000000000000000003A /* QuotaHistoryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuotaHistoryStore.swift; sourceTree = "<group>"; };
+			A1000000000000000000003B /* PasteboardUtilities.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PasteboardUtilities.swift; sourceTree = "<group>"; };
+			A1000000000000000000003D /* PixelOfficeAgentViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PixelOfficeAgentViews.swift; sourceTree = "<group>"; };
+			A1000000000000000000003F /* PixelOfficeInspectorViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PixelOfficeInspectorViews.swift; sourceTree = "<group>"; };
+			A10000000000000000000041 /* PixelOfficeRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PixelOfficeRuntime.swift; sourceTree = "<group>"; };
+			A10000000000000000000043 /* PixelOfficeSceneViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PixelOfficeSceneViews.swift; sourceTree = "<group>"; };
+			A10000000000000000000045 /* PixelOfficeShellViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PixelOfficeShellViews.swift; sourceTree = "<group>"; };
+			A10000000000000000000047 /* SessionModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionModels.swift; sourceTree = "<group>"; };
+			A10000000000000000000049 /* SessionViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionViews.swift; sourceTree = "<group>"; };
+			A1000000000000000000004B /* SettingsViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsViews.swift; sourceTree = "<group>"; };
+			A1000000000000000000004D /* UsageMonitorTaskState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageMonitorTaskState.swift; sourceTree = "<group>"; };
+			A10000000000000000000030 /* AIWebUsageMonitor-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = AIWebUsageMonitor-Info.plist; sourceTree = SOURCE_ROOT; };
 			A10000000000000000000031 /* PixelOfficeAssets */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Sources/AIWebUsageMonitor/Resources/PixelOfficeAssets; sourceTree = SOURCE_ROOT; };
 			A10000000000000000000032 /* PixelOfficeSceneBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PixelOfficeSceneBuilder.swift; sourceTree = "<group>"; };
 			A10000000000000000000033 /* PixelOfficeAssets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PixelOfficeAssets.swift; sourceTree = "<group>"; };
@@ -79,15 +99,25 @@
 				A10000000000000000000022 /* AccountStore.swift */,
 				A10000000000000000000023 /* LaunchAtLoginManager.swift */,
 				A10000000000000000000024 /* LoginWindowController.swift */,
-				A10000000000000000000025 /* Models.swift */,
-				A10000000000000000000026 /* PlatformScraper.swift */,
-				A10000000000000000000027 /* StatusBarController.swift */,
-				A10000000000000000000028 /* UsageMonitorViewModel.swift */,
-				A10000000000000000000029 /* Views.swift */,
-				A1000000000000000000002A /* WebSessionManager.swift */,
-				A1000000000000000000002B /* UsageAlertManager.swift */,
-					A1000000000000000000002C /* PixelOfficeView.swift */,
-				A10000000000000000000036 /* LocalLogMonitor.swift */,
+					A10000000000000000000025 /* Models.swift */,
+					A10000000000000000000047 /* SessionModels.swift */,
+					A10000000000000000000026 /* PlatformScraper.swift */,
+					A1000000000000000000003B /* PasteboardUtilities.swift */,
+					A10000000000000000000027 /* StatusBarController.swift */,
+					A10000000000000000000028 /* UsageMonitorViewModel.swift */,
+					A1000000000000000000004D /* UsageMonitorTaskState.swift */,
+					A10000000000000000000029 /* Views.swift */,
+					A10000000000000000000049 /* SessionViews.swift */,
+					A1000000000000000000004B /* SettingsViews.swift */,
+					A1000000000000000000002A /* WebSessionManager.swift */,
+					A1000000000000000000002B /* UsageAlertManager.swift */,
+						A1000000000000000000002C /* PixelOfficeView.swift */,
+					A1000000000000000000003D /* PixelOfficeAgentViews.swift */,
+					A1000000000000000000003F /* PixelOfficeInspectorViews.swift */,
+					A10000000000000000000041 /* PixelOfficeRuntime.swift */,
+					A10000000000000000000043 /* PixelOfficeSceneViews.swift */,
+					A10000000000000000000045 /* PixelOfficeShellViews.swift */,
+					A10000000000000000000036 /* LocalLogMonitor.swift */,
 				A1000000000000000000003A /* QuotaHistoryStore.swift */,
 					A10000000000000000000032 /* PixelOfficeSceneBuilder.swift */,
 					A10000000000000000000033 /* PixelOfficeAssets.swift */,
@@ -183,15 +213,25 @@
 				A10000000000000000000012 /* AccountStore.swift in Sources */,
 				A10000000000000000000013 /* LaunchAtLoginManager.swift in Sources */,
 				A10000000000000000000014 /* LoginWindowController.swift in Sources */,
-				A10000000000000000000015 /* Models.swift in Sources */,
-				A10000000000000000000016 /* PlatformScraper.swift in Sources */,
-				A10000000000000000000017 /* StatusBarController.swift in Sources */,
-				A10000000000000000000018 /* UsageMonitorViewModel.swift in Sources */,
-				A10000000000000000000019 /* Views.swift in Sources */,
-				A1000000000000000000001A /* WebSessionManager.swift in Sources */,
-				A1000000000000000000001B /* UsageAlertManager.swift in Sources */,
-					A1000000000000000000001C /* PixelOfficeView.swift in Sources */,
-					A10000000000000000000035 /* LocalLogMonitor.swift in Sources */,
+					A10000000000000000000015 /* Models.swift in Sources */,
+					A10000000000000000000048 /* SessionModels.swift in Sources */,
+					A10000000000000000000016 /* PlatformScraper.swift in Sources */,
+					A1000000000000000000003C /* PasteboardUtilities.swift in Sources */,
+					A10000000000000000000017 /* StatusBarController.swift in Sources */,
+					A10000000000000000000018 /* UsageMonitorViewModel.swift in Sources */,
+					A1000000000000000000004E /* UsageMonitorTaskState.swift in Sources */,
+					A10000000000000000000019 /* Views.swift in Sources */,
+					A1000000000000000000004A /* SessionViews.swift in Sources */,
+					A1000000000000000000004C /* SettingsViews.swift in Sources */,
+					A1000000000000000000001A /* WebSessionManager.swift in Sources */,
+					A1000000000000000000001B /* UsageAlertManager.swift in Sources */,
+						A1000000000000000000001C /* PixelOfficeView.swift in Sources */,
+						A1000000000000000000003E /* PixelOfficeAgentViews.swift in Sources */,
+						A10000000000000000000040 /* PixelOfficeInspectorViews.swift in Sources */,
+						A10000000000000000000042 /* PixelOfficeRuntime.swift in Sources */,
+						A10000000000000000000044 /* PixelOfficeSceneViews.swift in Sources */,
+						A10000000000000000000046 /* PixelOfficeShellViews.swift in Sources */,
+						A10000000000000000000035 /* LocalLogMonitor.swift in Sources */,
 					A10000000000000000000039 /* QuotaHistoryStore.swift in Sources */,
 					A1000000000000000000001E /* PixelOfficeSceneBuilder.swift in Sources */,
 					A1000000000000000000001F /* PixelOfficeAssets.swift in Sources */,

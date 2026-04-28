@@ -1,4 +1,6 @@
 import Foundation
+import Dispatch
+import Darwin
 
 enum LocalLogActivityState: Equatable {
     case waiting
@@ -22,12 +24,73 @@ actor LocalLogMonitor {
         let filePrefix: String?
     }
 
+    private final class WatchResources: @unchecked Sendable {
+        var activeSources: [DispatchSourceFileSystemObject] = []
+        var fallbackTimer: DispatchSourceTimer?
+    }
+
     private let sources: [AIPlatform: [LogSource]]
 
     init() {
         self.sources = [
+            .codex: [LogSource(directory: "~/Library/Logs/com.openai.codex", filePrefix: "codex-")],
             .claude: [LogSource(directory: "~/Library/Logs/Claude", filePrefix: nil)]
         ]
+    }
+
+    func snapshotStream() -> AsyncStream<[AIPlatform: LocalLogSnapshot]> {
+        let sources = self.sources
+        return AsyncStream(bufferingPolicy: .bufferingNewest(1)) { continuation in
+            let queue = DispatchQueue(label: "aiweb.local-log-watch", qos: .utility)
+            let resources = WatchResources()
+
+            let emitLatestSnapshots = {
+                Task {
+                    let snapshots = await self.captureSnapshots(now: Date())
+                    continuation.yield(snapshots)
+                }
+            }
+
+            _ = emitLatestSnapshots()
+
+            let watchTargets = Self.watchTargetPaths(from: sources)
+            for targetPath in watchTargets {
+                let expanded = NSString(string: targetPath).expandingTildeInPath
+                let fd = open(expanded, O_EVTONLY)
+                guard fd >= 0 else {
+                    continue
+                }
+
+                let source = DispatchSource.makeFileSystemObjectSource(
+                    fileDescriptor: fd,
+                    eventMask: [.write, .extend, .rename, .delete, .attrib],
+                    queue: queue
+                )
+                source.setEventHandler {
+                    _ = emitLatestSnapshots()
+                }
+                source.setCancelHandler {
+                    close(fd)
+                }
+                source.activate()
+                resources.activeSources.append(source)
+            }
+
+            let timer = DispatchSource.makeTimerSource(queue: queue)
+            timer.schedule(deadline: .now() + 1, repeating: 1)
+            timer.setEventHandler {
+                _ = emitLatestSnapshots()
+            }
+            timer.activate()
+            resources.fallbackTimer = timer
+
+            continuation.onTermination = { _ in
+                resources.fallbackTimer?.cancel()
+                for source in resources.activeSources {
+                    source.cancel()
+                }
+            }
+        }
     }
 
     func captureSnapshots(now: Date = Date()) async -> [AIPlatform: LocalLogSnapshot] {
@@ -128,6 +191,12 @@ actor LocalLogMonitor {
         return candidates
     }
 
+    private static func watchTargetPaths(from sourcesByPlatform: [AIPlatform: [LogSource]]) -> [String] {
+        let allSources = sourcesByPlatform.values.flatMap { $0 }
+        let directories = Set(allSources.map(\.directory))
+        return Array(directories)
+    }
+
     private static func readTail(from url: URL, byteCount: Int) -> String? {
         let fileManager = FileManager.default
         guard let handle = try? FileHandle(forReadingFrom: url) else {
@@ -171,6 +240,12 @@ actor LocalLogMonitor {
 
     private static func summaryText(for platform: AIPlatform, state: LocalLogActivityState) -> String {
         switch (platform, state) {
+        case (.codex, .working):
+            return "Codex 로컬 로그에서 작업 이벤트가 감지되었습니다."
+        case (.codex, .waiting):
+            return "Codex 로컬 로그에서 요청 수신 신호가 감지되었습니다."
+        case (.codex, .idle):
+            return "Codex 로컬 로그에서 최근 작업 신호가 없습니다."
         case (.claude, .working):
             return "Claude 로컬 로그에서 작업 이벤트가 감지되었습니다."
         case (.claude, .waiting):
@@ -199,7 +274,12 @@ actor LocalLogMonitor {
         "streaming response",
         "assistant response",
         "tool_call",
+        "\"type\":\"tool_call\"",
+        "\"event\":\"response.output_text.delta\"",
+        "\"event\":\"response.completed\"",
         "executing tool",
+        "started tool execution",
+        "tool execution completed",
         "completion finished",
         "model output chunk",
         "responding to user"
