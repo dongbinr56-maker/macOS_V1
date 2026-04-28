@@ -956,8 +956,8 @@ struct QuotaMetricCardView: View {
             QuotaTrendSparkline(points: history, tint: trendTint)
                 .frame(height: 20)
 
-            if let resetText = entry.resetText, !resetText.isEmpty {
-                Text(resetText)
+            if let resetDescription {
+                Text(resetDescription)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -995,6 +995,31 @@ struct QuotaMetricCardView: View {
             return progressTint(current)
         }
         return .secondary
+    }
+
+    private var resetDescription: String? {
+        let trimmedReset = entry.resetText?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasReset = (trimmedReset?.isEmpty == false)
+
+        if isFiveHourQuota {
+            if let trimmedReset, hasReset {
+                return "5시간 초기화: \(trimmedReset)"
+            }
+            return "5시간 초기화 시각 수집 중"
+        }
+
+        guard let trimmedReset, hasReset else {
+            return nil
+        }
+        return "초기화: \(trimmedReset)"
+    }
+
+    private var isFiveHourQuota: Bool {
+        let normalized = entry.label
+            .lowercased()
+            .replacingOccurrences(of: " ", with: "")
+        return normalized.contains("5시간") || normalized.contains("5-hour")
     }
 }
 

@@ -1,6 +1,149 @@
 import AppKit
 import SwiftUI
 
+private struct PixelOfficeAmbience {
+    enum Phase: String {
+        case dawn
+        case day
+        case dusk
+        case night
+    }
+
+    let phase: Phase
+    let skyTop: Color
+    let skyBottom: Color
+    let overlay: Color
+    let accent: Color
+    let moodTitle: String
+    let moodSubtitle: String
+
+    static func make(now: Date, agents: [PixelOfficeAgent]) -> PixelOfficeAmbience {
+        let hour = Calendar.current.component(.hour, from: now)
+        let alertCount = agents.filter(\.isAlerting).count
+        let activeCount = agents.filter { $0.taskState == .working || $0.taskState == .responding }.count
+
+        let phase: Phase
+        switch hour {
+        case 6..<10:
+            phase = .dawn
+        case 10..<17:
+            phase = .day
+        case 17..<21:
+            phase = .dusk
+        default:
+            phase = .night
+        }
+
+        let moodTitle: String
+        if alertCount > 0 {
+            moodTitle = "긴급 대응 시간"
+        } else if activeCount > 0 {
+            moodTitle = "집중 작업 시간"
+        } else {
+            moodTitle = "여유 운영 시간"
+        }
+
+        let phaseLabel: String = switch phase {
+        case .dawn: "새벽"
+        case .day: "낮"
+        case .dusk: "노을"
+        case .night: "밤"
+        }
+        let moodSubtitle = "\(phaseLabel) 분위기 · 경고 \(alertCount) · 활성 \(activeCount)"
+
+        switch phase {
+        case .dawn:
+            return PixelOfficeAmbience(
+                phase: phase,
+                skyTop: Color(red: 0.28, green: 0.25, blue: 0.42),
+                skyBottom: Color(red: 0.52, green: 0.34, blue: 0.42),
+                overlay: Color(red: 0.99, green: 0.76, blue: 0.52).opacity(0.10),
+                accent: Color(red: 0.95, green: 0.66, blue: 0.44),
+                moodTitle: moodTitle,
+                moodSubtitle: moodSubtitle
+            )
+        case .day:
+            return PixelOfficeAmbience(
+                phase: phase,
+                skyTop: Color(red: 0.20, green: 0.33, blue: 0.52),
+                skyBottom: Color(red: 0.20, green: 0.53, blue: 0.62),
+                overlay: Color(red: 0.70, green: 0.92, blue: 0.99).opacity(0.08),
+                accent: Color(red: 0.40, green: 0.79, blue: 0.98),
+                moodTitle: moodTitle,
+                moodSubtitle: moodSubtitle
+            )
+        case .dusk:
+            return PixelOfficeAmbience(
+                phase: phase,
+                skyTop: Color(red: 0.33, green: 0.21, blue: 0.39),
+                skyBottom: Color(red: 0.70, green: 0.36, blue: 0.31),
+                overlay: Color(red: 0.98, green: 0.61, blue: 0.36).opacity(0.12),
+                accent: Color(red: 0.98, green: 0.71, blue: 0.33),
+                moodTitle: moodTitle,
+                moodSubtitle: moodSubtitle
+            )
+        case .night:
+            return PixelOfficeAmbience(
+                phase: phase,
+                skyTop: Color(red: 0.05, green: 0.08, blue: 0.17),
+                skyBottom: Color(red: 0.03, green: 0.05, blue: 0.10),
+                overlay: Color(red: 0.24, green: 0.31, blue: 0.62).opacity(0.16),
+                accent: Color(red: 0.62, green: 0.73, blue: 0.99),
+                moodTitle: moodTitle,
+                moodSubtitle: moodSubtitle
+            )
+        }
+    }
+}
+
+private enum PixelOfficeRenderProfile: String, CaseIterable, Identifiable {
+    case balanced
+    case cinematic
+    case focused
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .balanced:
+            return "균형"
+        case .cinematic:
+            return "시네마"
+        case .focused:
+            return "집중"
+        }
+    }
+
+    var frameInterval: Double {
+        switch self {
+        case .cinematic:
+            return 1.0 / 12.0
+        case .balanced:
+            return 1.0 / 8.0
+        case .focused:
+            return 1.0 / 5.0
+        }
+    }
+
+    var detailText: String {
+        switch self {
+        case .cinematic:
+            return "조명/이펙트를 최대로 보여줍니다."
+        case .balanced:
+            return "시각 효과와 가독성의 균형 설정입니다."
+        case .focused:
+            return "정보 확인에 집중한 저연출 모드입니다."
+        }
+    }
+}
+
+private struct PixelOfficeBriefingItem: Identifiable {
+    let id: UUID
+    let title: String
+    let detail: String
+    let tint: Color
+}
+
 private struct PixelOfficeMotionFingerprint: Equatable {
     let id: UUID
     let zone: PixelOfficeZone
@@ -126,6 +269,7 @@ struct PixelOfficeView: View {
     @State private var hoveredAgentID: UUID?
     @AppStorage("pixelOfficeVisibilityFilter") private var visibilityFilterRaw = PixelOfficeAgentVisibilityFilter.all.rawValue
     @AppStorage("pixelOfficePlatformFilter") private var platformFilterRaw = PixelOfficePlatformFilter.all.rawValue
+    @AppStorage("pixelOfficeRenderProfile") private var renderProfileRaw = PixelOfficeRenderProfile.balanced.rawValue
 
     private var allOfficeAgents: [PixelOfficeAgent] {
         let descriptors = sessions.map { session in
@@ -157,6 +301,11 @@ struct PixelOfficeView: View {
         )
     }
 
+    private var renderProfile: PixelOfficeRenderProfile {
+        get { PixelOfficeRenderProfile(rawValue: renderProfileRaw) ?? .balanced }
+        nonmutating set { renderProfileRaw = newValue.rawValue }
+    }
+
     private var officeAgents: [PixelOfficeAgent] {
         officeFilter.apply(to: allOfficeAgents)
     }
@@ -167,6 +316,47 @@ struct PixelOfficeView: View {
 
     private var activeAgents: [PixelOfficeAgent] {
         PixelOfficeSceneBuilder.activeQueue(from: officeAgents)
+    }
+
+    private var briefingItems: [PixelOfficeBriefingItem] {
+        var items: [PixelOfficeBriefingItem] = []
+
+        for agent in alertAgents.prefix(2) {
+            items.append(
+                PixelOfficeBriefingItem(
+                    id: agent.id,
+                    title: "\(agent.displayName) 즉시 확인 필요",
+                    detail: agent.detailLine,
+                    tint: agent.tint
+                )
+            )
+        }
+
+        if items.count < 3 {
+            for agent in activeAgents.prefix(3 - items.count) {
+                items.append(
+                    PixelOfficeBriefingItem(
+                        id: agent.id,
+                        title: "\(agent.displayName) 작업 진행 중",
+                        detail: agent.conversationTitle ?? agent.latestAssistantPreview ?? agent.stateLabel,
+                        tint: agent.tint
+                    )
+                )
+            }
+        }
+
+        if items.isEmpty {
+            items.append(
+                PixelOfficeBriefingItem(
+                    id: UUID(),
+                    title: "특이 상황 없음",
+                    detail: "현재 오피스는 안정적으로 운영 중입니다.",
+                    tint: Color(red: 0.44, green: 0.77, blue: 0.56)
+                )
+            )
+        }
+
+        return items
     }
 
     private var hasFilteredResults: Bool {
@@ -201,9 +391,12 @@ struct PixelOfficeView: View {
                 selectedAgent: selectedAgent,
                 alertAgents: alertAgents,
                 activeAgents: activeAgents,
+                renderProfile: renderProfile,
+                briefingItems: briefingItems,
                 isRefreshing: viewModel.isRefreshingAll,
                 onSelectVisibility: { visibilityFilter = $0 },
                 onSelectPlatform: { platformFilter = $0 },
+                onSelectRenderProfile: { renderProfile = $0 },
                 onSelectAgent: { selectedAgentID = $0 },
                 onRefreshAll: {
                     Task {
@@ -220,6 +413,7 @@ struct PixelOfficeView: View {
                 hasSessions: !allOfficeAgents.isEmpty,
                 selectedAgentID: selectedAgentID,
                 focusedAgent: focusedAgent,
+                renderProfile: renderProfile,
                 onSelect: { selectedAgentID = $0 },
                 onHover: { hoveredAgentID = $0 },
                 onResetFilters: resetFilters,
@@ -299,11 +493,13 @@ private struct PixelOfficeSceneCard: View {
     let hasSessions: Bool
     let selectedAgentID: UUID?
     let focusedAgent: PixelOfficeAgent?
+    let renderProfile: PixelOfficeRenderProfile
     let onSelect: (UUID) -> Void
     let onHover: (UUID?) -> Void
     let onResetFilters: () -> Void
     let onOpenSettings: () -> Void
     @StateObject private var motionCoordinator = PixelOfficeMotionCoordinator()
+    @State private var ambienceNow = Date()
 
     private var motionFingerprint: [PixelOfficeMotionFingerprint] {
         agents.map {
@@ -323,7 +519,7 @@ private struct PixelOfficeSceneCard: View {
                     Text("픽셀 오피스")
                         .font(.system(size: 12, weight: .black, design: .monospaced))
                         .kerning(1.4)
-                    Text(sceneSubtitle)
+                    Text(sceneSubtitle(ambience: ambience))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -355,16 +551,29 @@ private struct PixelOfficeSceneCard: View {
                 }
             }
 
-            TimelineView(.animation(minimumInterval: 1.0 / 8.0, paused: false)) { context in
-                PixelOfficeScene(
-                    agents: agents,
-                    motionCoordinator: motionCoordinator,
-                    selectedAgentID: selectedAgentID,
-                    focusedAgent: focusedAgent,
-                    timestamp: context.date.timeIntervalSinceReferenceDate,
-                    onSelect: onSelect,
-                    onHover: onHover
-                )
+            TimelineView(.animation(minimumInterval: renderProfile.frameInterval, paused: false)) { context in
+                ZStack(alignment: .topLeading) {
+                    PixelOfficeScene(
+                        agents: agents,
+                        motionCoordinator: motionCoordinator,
+                        selectedAgentID: selectedAgentID,
+                        focusedAgent: focusedAgent,
+                        ambience: ambience,
+                        renderProfile: renderProfile,
+                        timestamp: context.date.timeIntervalSinceReferenceDate,
+                        onSelect: onSelect,
+                        onHover: onHover
+                    )
+                    PixelOfficeSceneHUD(
+                        ambience: ambience,
+                        qualityScore: qualityScore,
+                        selectedAgent: selectedAgent
+                    )
+                    .padding(10)
+                }
+                .onChange(of: context.date) { _, value in
+                    ambienceNow = value
+                }
             }
             .frame(height: 392)
             .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
@@ -405,7 +614,26 @@ private struct PixelOfficeSceneCard: View {
         }
     }
 
-    private var sceneSubtitle: String {
+    private var ambience: PixelOfficeAmbience {
+        PixelOfficeAmbience.make(now: ambienceNow, agents: agents)
+    }
+
+    private var selectedAgent: PixelOfficeAgent? {
+        if let selectedAgentID {
+            return agents.first(where: { $0.id == selectedAgentID })
+        }
+        return agents.first
+    }
+
+    private var qualityScore: Int {
+        guard !agents.isEmpty else { return 100 }
+        let alerts = agents.filter(\.isAlerting).count
+        let stale = agents.filter { $0.taskState == .stale }.count
+        let penalty = alerts * 20 + stale * 8
+        return max(0, min(100, 100 - penalty))
+    }
+
+    private func sceneSubtitle(ambience: PixelOfficeAmbience) -> String {
         guard hasSessions else {
             return "Codex나 Claude 세션을 추가하면 픽셀 오피스에 캐릭터가 배치됩니다."
         }
@@ -416,11 +644,11 @@ private struct PixelOfficeSceneCard: View {
 
         let blocked = agents.filter(\.isAlerting).count
         if blocked > 0 {
-            return "\(blocked)개의 세션이 경고 상태로 표시되고 있습니다."
+            return "\(ambience.moodSubtitle) · \(blocked)개 세션이 경고 상태입니다."
         }
 
         let working = agents.filter { $0.zone == .desk }.count
-        return "\(working)개의 세션이 워크스테이션에서 작업 중입니다."
+        return "\(ambience.moodSubtitle) · \(working)개 세션이 워크스테이션에서 작업 중입니다."
     }
 
     private var cardBackground: some View {
@@ -438,6 +666,52 @@ private struct PixelOfficeSceneCard: View {
     }
 }
 
+private struct PixelOfficeSceneHUD: View {
+    let ambience: PixelOfficeAmbience
+    let qualityScore: Int
+    let selectedAgent: PixelOfficeAgent?
+
+    var body: some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(ambience.moodTitle)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.white)
+                Text(selectedAgent?.displayName ?? ambience.moodSubtitle)
+                    .font(.caption2)
+                    .foregroundStyle(Color.white.opacity(0.78))
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 6)
+
+            Text("퀄리티 \(qualityScore)")
+                .font(.system(size: 10, weight: .black, design: .monospaced))
+                .foregroundStyle(qualityScore >= 80 ? Color.green : (qualityScore >= 50 ? Color.yellow : Color.red))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(
+                    Capsule(style: .continuous)
+                        .fill(Color.black.opacity(0.45))
+                        .overlay(
+                            Capsule(style: .continuous)
+                                .stroke(Color.white.opacity(0.14), lineWidth: 1)
+                        )
+                )
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.black.opacity(0.35))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                )
+        )
+    }
+}
+
 private struct PixelOfficeCommandDeck: View {
     let totalAgentCount: Int
     let visibleAgentCount: Int
@@ -446,9 +720,12 @@ private struct PixelOfficeCommandDeck: View {
     let selectedAgent: PixelOfficeAgent?
     let alertAgents: [PixelOfficeAgent]
     let activeAgents: [PixelOfficeAgent]
+    let renderProfile: PixelOfficeRenderProfile
+    let briefingItems: [PixelOfficeBriefingItem]
     let isRefreshing: Bool
     let onSelectVisibility: (PixelOfficeAgentVisibilityFilter) -> Void
     let onSelectPlatform: (PixelOfficePlatformFilter) -> Void
+    let onSelectRenderProfile: (PixelOfficeRenderProfile) -> Void
     let onSelectAgent: (UUID) -> Void
     let onRefreshAll: () -> Void
     let onResetFilters: () -> Void
@@ -500,6 +777,18 @@ private struct PixelOfficeCommandDeck: View {
                 onSelect: onSelectPlatform
             )
 
+            PixelOfficeFilterRow(
+                title: "연출",
+                items: PixelOfficeRenderProfile.allCases,
+                selectedID: renderProfile.id,
+                label: \.title,
+                onSelect: onSelectRenderProfile
+            )
+
+            Text(renderProfile.detailText)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+
             if !alertAgents.isEmpty || !activeAgents.isEmpty {
                 PixelOfficeMissionBoard(
                     selectedAgentID: selectedAgent?.id,
@@ -508,6 +797,9 @@ private struct PixelOfficeCommandDeck: View {
                     onSelectAgent: onSelectAgent
                 )
             }
+
+            PixelOfficeBriefingPanel(items: briefingItems)
+            PixelOfficeStatusLegend()
 
             if visibilityFilter != .all || platformFilter != .all {
                 Button("필터 초기화") {
@@ -540,7 +832,7 @@ private struct PixelOfficeMissionBoard: View {
         VStack(alignment: .leading, spacing: 10) {
             if !alertAgents.isEmpty {
                 PixelOfficeMissionLane(
-                    title: "즉시 조치",
+                    title: "긴급 요청",
                     agents: alertAgents,
                     selectedAgentID: selectedAgentID,
                     onSelectAgent: onSelectAgent
@@ -549,7 +841,7 @@ private struct PixelOfficeMissionBoard: View {
 
             if !activeAgents.isEmpty {
                 PixelOfficeMissionLane(
-                    title: "활성 작업",
+                    title: "진행 중 퀘스트",
                     agents: activeAgents,
                     selectedAgentID: selectedAgentID,
                     onSelectAgent: onSelectAgent
@@ -617,6 +909,70 @@ private struct PixelOfficeMissionLane: View {
     }
 }
 
+private struct PixelOfficeBriefingPanel: View {
+    let items: [PixelOfficeBriefingItem]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("상황 브리핑")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            ForEach(items.prefix(3)) { item in
+                HStack(alignment: .top, spacing: 8) {
+                    Circle()
+                        .fill(item.tint)
+                        .frame(width: 7, height: 7)
+                        .padding(.top, 4)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(item.title)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.primary)
+                        Text(item.detail)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
+                }
+            }
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color(nsColor: .windowBackgroundColor).opacity(0.78))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(Color.white.opacity(0.05), lineWidth: 1)
+                )
+        )
+    }
+}
+
+private struct PixelOfficeStatusLegend: View {
+    private let entries: [(String, Color)] = [
+        ("작업/응답", Color(red: 0.22, green: 0.82, blue: 0.50)),
+        ("대기", Color(red: 0.35, green: 0.78, blue: 0.98)),
+        ("주의", Color(red: 0.98, green: 0.76, blue: 0.30)),
+        ("오류/차단", Color(red: 0.98, green: 0.45, blue: 0.42))
+    ]
+
+    var body: some View {
+        HStack(spacing: 10) {
+            ForEach(entries, id: \.0) { entry in
+                HStack(spacing: 5) {
+                    Circle()
+                        .fill(entry.1)
+                        .frame(width: 7, height: 7)
+                    Text(entry.0)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .padding(.horizontal, 2)
+    }
+}
+
 private struct PixelOfficeFilterRow<Item: Identifiable>: View where Item.ID == String {
     let title: String
     let items: [Item]
@@ -659,6 +1015,8 @@ private struct PixelOfficeScene: View {
     let motionCoordinator: PixelOfficeMotionCoordinator
     let selectedAgentID: UUID?
     let focusedAgent: PixelOfficeAgent?
+    let ambience: PixelOfficeAmbience
+    let renderProfile: PixelOfficeRenderProfile
     let timestamp: TimeInterval
     let onSelect: (UUID) -> Void
     let onHover: (UUID?) -> Void
@@ -685,8 +1043,19 @@ private struct PixelOfficeScene: View {
                     return lhs.0.displayName.localizedStandardCompare(rhs.0.displayName) == .orderedAscending
                 }
 
-            ZStack {
-                PixelOfficeBackdrop(metrics: metrics)
+            let sceneLayers = ZStack {
+                PixelOfficeBackdrop(
+                    metrics: metrics,
+                    ambience: ambience,
+                    renderProfile: renderProfile,
+                    timestamp: timestamp
+                )
+
+                PixelOfficeAlertLighting(
+                    metrics: metrics,
+                    agents: agents,
+                    timestamp: timestamp
+                )
 
                 ForEach(renderedAgents, id: \.0.id) { rendered in
                     PixelOfficeAgentView(
@@ -703,22 +1072,52 @@ private struct PixelOfficeScene: View {
                     .zIndex(Double(rendered.1.point.y - metrics.origin.y + metrics.tileSize / 2 + 0.5))
                 }
             }
+
+            let camera = cameraTransform(metrics: metrics, renderedAgents: renderedAgents)
+            sceneLayers
+                .scaleEffect(camera.scale, anchor: .center)
+                .offset(x: camera.offset.width, y: camera.offset.height)
+                .animation(.easeInOut(duration: 0.35), value: camera.scale)
+                .animation(.easeInOut(duration: 0.35), value: camera.offset)
         }
         .background(
             LinearGradient(
                 colors: [
-                    Color(red: 0.07, green: 0.09, blue: 0.15),
-                    Color(red: 0.03, green: 0.05, blue: 0.09)
+                    ambience.skyTop,
+                    ambience.skyBottom
                 ],
                 startPoint: .top,
                 endPoint: .bottom
             )
         )
     }
+
+    private func cameraTransform(
+        metrics: PixelOfficeSceneMetrics,
+        renderedAgents: [(PixelOfficeAgent, PixelOfficeAnimatedPose)]
+    ) -> (scale: CGFloat, offset: CGSize) {
+        guard renderProfile != .focused,
+              let selectedAgentID,
+              let selected = renderedAgents.first(where: { $0.0.id == selectedAgentID }) else {
+            return (1.0, .zero)
+        }
+
+        let target = selected.1.point
+        let center = CGPoint(x: metrics.sceneRect.midX, y: metrics.sceneRect.midY)
+        let dx = (center.x - target.x) * 0.34
+        let dy = (center.y - target.y) * 0.26
+        let clampedX = max(-18, min(18, dx))
+        let clampedY = max(-14, min(14, dy))
+        let scale: CGFloat = renderProfile == .cinematic ? 1.07 : 1.04
+        return (scale, CGSize(width: clampedX, height: clampedY))
+    }
 }
 
 private struct PixelOfficeBackdrop: View {
     let metrics: PixelOfficeSceneMetrics
+    let ambience: PixelOfficeAmbience
+    let renderProfile: PixelOfficeRenderProfile
+    let timestamp: TimeInterval
 
     var body: some View {
         let backdrop = PixelOfficeSourceLayoutStore.shared.backdropImage(in: metrics)
@@ -754,6 +1153,115 @@ private struct PixelOfficeBackdrop: View {
                 )
                 .frame(width: metrics.sceneSize.width, height: metrics.sceneSize.height)
                 .position(x: metrics.sceneRect.midX, y: metrics.sceneRect.midY)
+
+            Rectangle()
+                .fill(ambience.overlay)
+                .opacity(renderProfile == .focused ? 0.45 : 1)
+                .frame(width: metrics.sceneSize.width, height: metrics.sceneSize.height)
+                .position(x: metrics.sceneRect.midX, y: metrics.sceneRect.midY)
+
+            if ambience.phase == .night, renderProfile != .focused {
+                PixelOfficeNightFireflies(
+                    metrics: metrics,
+                    timestamp: timestamp,
+                    accent: ambience.accent,
+                    density: renderProfile == .cinematic ? 1.0 : 0.65
+                )
+            }
+
+            if renderProfile == .cinematic {
+                PixelOfficeCinematicDust(metrics: metrics, timestamp: timestamp, accent: ambience.accent)
+            }
+        }
+    }
+}
+
+private struct PixelOfficeNightFireflies: View {
+    let metrics: PixelOfficeSceneMetrics
+    let timestamp: TimeInterval
+    let accent: Color
+    let density: Double
+
+    private let anchors: [CGPoint] = [
+        CGPoint(x: 0.10, y: 0.18),
+        CGPoint(x: 0.24, y: 0.14),
+        CGPoint(x: 0.39, y: 0.20),
+        CGPoint(x: 0.61, y: 0.17),
+        CGPoint(x: 0.75, y: 0.14),
+        CGPoint(x: 0.88, y: 0.21)
+    ]
+
+    var body: some View {
+        let limit = max(2, Int(Double(anchors.count) * density))
+        ZStack {
+            ForEach(Array(anchors.prefix(limit).enumerated()), id: \.offset) { index, anchor in
+                Circle()
+                    .fill(accent.opacity(0.65))
+                    .frame(width: 3, height: 3)
+                    .blur(radius: 0.5)
+                    .opacity(0.35 + (sin(timestamp * 1.7 + Double(index) * 1.1) + 1) * 0.24)
+                    .position(
+                        x: metrics.sceneRect.minX + metrics.sceneSize.width * anchor.x,
+                        y: metrics.sceneRect.minY + metrics.sceneSize.height * anchor.y
+                    )
+            }
+        }
+    }
+}
+
+private struct PixelOfficeCinematicDust: View {
+    let metrics: PixelOfficeSceneMetrics
+    let timestamp: TimeInterval
+    let accent: Color
+
+    var body: some View {
+        ZStack {
+            ForEach(0..<8, id: \.self) { index in
+                let phase = timestamp * 0.18 + Double(index) * 0.23
+                let x = metrics.sceneRect.minX + metrics.sceneSize.width * CGFloat((phase.truncatingRemainder(dividingBy: 1)))
+                let yBase = 0.14 + Double(index % 4) * 0.12
+                let y = metrics.sceneRect.minY + metrics.sceneSize.height * CGFloat(yBase + sin(timestamp * 0.7 + Double(index)) * 0.015)
+
+                Circle()
+                    .fill(accent.opacity(0.12))
+                    .frame(width: 6, height: 6)
+                    .blur(radius: 1.5)
+                    .position(x: x, y: y)
+            }
+        }
+        .blendMode(.screen)
+    }
+}
+
+private struct PixelOfficeAlertLighting: View {
+    let metrics: PixelOfficeSceneMetrics
+    let agents: [PixelOfficeAgent]
+    let timestamp: TimeInterval
+
+    private var alertIntensity: Double {
+        guard agents.contains(where: \.isAlerting) else {
+            return 0
+        }
+        return 0.08 + (sin(timestamp * 2.8) + 1) * 0.06
+    }
+
+    var body: some View {
+        if alertIntensity > 0 {
+            Rectangle()
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Color.red.opacity(alertIntensity * 0.45),
+                            Color.orange.opacity(alertIntensity),
+                            Color.clear
+                        ],
+                        startPoint: .topTrailing,
+                        endPoint: .bottomLeading
+                    )
+                )
+                .frame(width: metrics.sceneSize.width, height: metrics.sceneSize.height)
+                .position(x: metrics.sceneRect.midX, y: metrics.sceneRect.midY)
+                .blendMode(.screen)
         }
     }
 }
@@ -1088,6 +1596,14 @@ private struct PixelOfficeAgentView: View {
                         .offset(y: -36)
                 }
 
+                if isSelected {
+                    Circle()
+                        .stroke(agent.tint.opacity(0.75), lineWidth: 1.5)
+                        .frame(width: 38, height: 38)
+                        .blur(radius: 0.8)
+                        .offset(y: -3)
+                }
+
                 if statusDotColor != .clear {
                     Circle()
                         .fill(statusDotColor)
@@ -1175,12 +1691,29 @@ private struct PixelOfficeAgentTag: View {
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(.white)
                     .lineLimit(1)
+
+                Text(roleTitle)
+                    .font(.system(size: 8, weight: .bold, design: .monospaced))
+                    .foregroundStyle(agent.tint.opacity(0.95))
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 2)
+                    .background(
+                        Capsule(style: .continuous)
+                            .fill(Color.white.opacity(0.08))
+                    )
             }
 
             Text(agent.stateLabel)
                 .font(.system(size: 10, weight: .bold, design: .monospaced))
                 .foregroundStyle(agent.tint)
                 .lineLimit(1)
+
+            if let hint = agent.latestAssistantPreview ?? agent.latestUserPromptPreview {
+                Text(hint)
+                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                    .foregroundStyle(Color.white.opacity(0.78))
+                    .lineLimit(1)
+            }
         }
         .padding(.horizontal, 9)
         .padding(.vertical, 7)
@@ -1192,6 +1725,17 @@ private struct PixelOfficeAgentTag: View {
                         .stroke(agent.tint.opacity(isSelected ? 0.48 : 0.22), lineWidth: 1)
                 )
         )
+    }
+
+    private var roleTitle: String {
+        switch agent.platform {
+        case .codex:
+            return "OPS"
+        case .claude:
+            return "R&D"
+        case .cursor:
+            return "BUILD"
+        }
     }
 }
 

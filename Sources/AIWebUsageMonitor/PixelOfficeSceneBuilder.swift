@@ -90,13 +90,13 @@ enum PixelOfficeAgentVisibilityFilter: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .all:
-            return "All"
+            return "전체"
         case .working:
-            return "Work"
+            return "작업중"
         case .alerts:
-            return "Alerts"
+            return "주의"
         case .idle:
-            return "Idle"
+            return "휴식"
         }
     }
 }
@@ -112,7 +112,7 @@ enum PixelOfficePlatformFilter: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .all:
-            return "All"
+            return "전체"
         case .codex:
             return AIPlatform.codex.displayName
         case .claude:
